@@ -1,0 +1,6 @@
+# Normalize line endings: LF in the repo, native on checkout where it matters.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.ico binary
+*.png binary

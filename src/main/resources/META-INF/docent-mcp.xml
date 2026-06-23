@@ -1,0 +1,7 @@
+<!-- Loaded only when com.intellij.mcpServer is present (see plugin.xml's optional <depends>). Publishes
+     the Docent handoff tools into the IDE's in-process MCP server, reachable by workbench-launched agents. -->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij.mcpServer">
+        <mcpToolset implementation="com.kevingosse.docent.mcp.DocentMcpToolset"/>
+    </extensions>
+</idea-plugin>

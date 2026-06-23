@@ -1,0 +1,45 @@
+<idea-plugin>
+    <id>com.kevingosse.docent</id>
+    <name>Code Review Docent</name>
+    <vendor url="https://github.com/kevingosse">Kevin Gosse</vendor>
+
+    <description><![CDATA[
+        AI-guided code review. A coding agent captures the story of a change (the "Trail");
+        a reviewing agent (the "Docent") walks you through it interactively in the editor &mdash;
+        bite-sized, opinionated, and ready to answer your questions. The goal is to keep humans
+        in touch with codebases increasingly written by AI.<br/>
+        <em>Prototype / pre-release.</em>
+    ]]></description>
+
+    <!-- Platform-only core; no language/VCS module dependencies yet. -->
+    <depends>com.intellij.modules.platform</depends>
+    <!-- Optional: when the in-IDE MCP server is present, publish the Docent handoff tools so a
+         workbench-launched coding agent can call them. The core plugin loads fine without it. -->
+    <depends optional="true" config-file="docent-mcp.xml">com.intellij.mcpServer</depends>
+    <!-- Optional: when the Agent Workbench is installed, wire the IDE MCP URL into AWB sessions so
+         workbench-launched Claude agents see the IDE's MCP tools. Also enables the AWB registry key
+         that activates this path (agent.workbench.mcp.use.direct.http). -->
+    <depends optional="true" config-file="docent-awb.xml">com.intellij.agent.workbench</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Navigation (sections + files) lives in a left tool window; the review opens in the editor pane. -->
+        <toolWindow id="Docent" anchor="left" canCloseContents="false"
+                    factoryClass="com.kevingosse.docent.DocentToolWindowFactory"/>
+        <!-- The review itself opens as a main-pane editor tab, driven by the nav tool window. -->
+        <fileEditorProvider implementation="com.kevingosse.docent.DocentFileEditorProvider"/>
+        <!-- Embeds Docent comment cards into our diffs' "after" editor (scoped via a request marker). -->
+        <diff.DiffExtension implementation="com.kevingosse.docent.ui.DocentDiffCommentExtension"/>
+        <!-- Sub-file focus: dims a whole-file diff outside the section's focus range and names each dimmed hunk's
+             owning section. Scoped via a request marker (DocentFocusMarker.RANGE); no-ops on every other diff. -->
+        <diff.DiffExtension implementation="com.kevingosse.docent.ui.DocentDimmingDiffExtension"/>
+    </extensions>
+
+    <actions>
+        <action id="codereview.openDocentReview"
+                class="com.kevingosse.docent.OpenDocentReviewAction"
+                text="Open Docent Review"
+                description="Open the Docent code-review walkthrough in the editor">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

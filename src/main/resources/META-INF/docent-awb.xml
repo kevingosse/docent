@@ -1,0 +1,21 @@
+<idea-plugin>
+    <!-- Loaded only when com.intellij.agent.workbench is present (see plugin.xml's optional <depends>).
+         Enables the AWB registry key that activates the direct-HTTP MCP path, so workbench-launched
+         agents reach the IDE's in-process MCP server (where DocentMcpToolset publishes the docent_* tools).
+
+         Rider 262 note: the workbench now resolves the MCP stream URL itself (bundled
+         container.mcp.ContainerMcpStreamUrlProvider) and builds the agent's mcp-config via
+         AwbMcpConfigBuilder, gated on this registry key. We therefore no longer ship our own
+         mcpStreamUrlProvider — the 261 interface com.intellij.agent.workbench.container.McpStreamUrlProvider
+         was removed in 262. Installing this plugin is implicit consent to the integration. -->
+    <extensions defaultExtensionNs="com.intellij">
+        <startupActivity implementation="com.kevingosse.docent.awb.EnableAwbDirectHttp"/>
+    </extensions>
+
+    <!-- Inject the Docent protocol into a workbench-launched agent's system prompt at launch, so it knows
+         the docent_* tools exist and when to use them without the human prompting it (see
+         DocentLaunchContributor). -->
+    <extensions defaultExtensionNs="com.intellij.agent.workbench">
+        <sessionLaunchContributor implementation="com.kevingosse.docent.awb.DocentLaunchContributor"/>
+    </extensions>
+</idea-plugin>

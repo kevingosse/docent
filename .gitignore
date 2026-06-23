@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+
+# Kotlin compiler daemon working dir
+.kotlin/
+
+# Throwaway spikes / smoke harnesses (e.g. scratch/acp-smoke.mjs)
+scratch/
+
+# IntelliJ Platform Gradle Plugin cache
+.intellijPlatform/
+
+# IntelliJ / IDE
+.idea/
+*.iml
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep the Gradle wrapper jar tracked (it lives under gradle/wrapper/)
