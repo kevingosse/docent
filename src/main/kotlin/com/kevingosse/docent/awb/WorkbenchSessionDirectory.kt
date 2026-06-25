@@ -1,6 +1,6 @@
 package com.kevingosse.docent.awb
 
-import com.intellij.agent.workbench.common.session.AgentSessionProvider
+import com.intellij.platform.ai.agent.core.session.AgentSessionProvider
 import com.intellij.agent.workbench.sessions.state.AgentSessionsStateStore
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger

@@ -1,12 +1,16 @@
 // Plugin Verifier ignore list — see the pluginVerification block in build.gradle.kts.
 //
-// Agent Workbench (com.intellij.agent.workbench) is an OPTIONAL, build-pinned dependency: the awb/
-// seam is gated behind <depends optional config-file="docent-awb.xml"> and only loads in an IDE that
-// has the matching AWB build installed. The IDEs we verify against either lack AWB or bundle a
-// DIFFERENT build, so the verifier reports references into it as unresolved classes/members even
-// though they resolve at runtime in an AWB-equipped IDE. Those are not core-portability problems, so
-// ignore anything that mentions the AWB package. Everything OUTSIDE this package is still verified.
+// Agent Workbench is an OPTIONAL, build-pinned dependency: the awb/ seam is gated behind
+// <depends optional config-file="docent-awb.xml"> and only loads in an IDE that has the matching AWB
+// build installed. The IDEs we verify against either lack AWB or bundle a DIFFERENT build, so the
+// verifier reports references into it as unresolved classes/members even though they resolve at
+// runtime in an AWB-equipped IDE. Those are not core-portability problems, so ignore anything that
+// mentions the AWB packages. Everything OUTSIDE these packages is still verified.
+//
+// After the 2026.2 upgrade AWB spans two roots: com.intellij.agent.workbench (prompt.core,
+// sessions.state, chat) and com.intellij.platform.ai.agent (session/launch types).
 //
 // Format: [<plugin_xml_id>[:<plugin_version>]:]<problem_description_regexp>
 // A bare regex (no id/version) applies to all plugins and versions — so this needs no version bump.
 .*com[.]intellij[.]agent[.]workbench.*
+.*com[.]intellij[.]platform[.]ai[.]agent.*

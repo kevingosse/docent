@@ -104,7 +104,10 @@ intellijPlatform {
         // mismatches against a bundled-but-older AWB. The core (everything else) is still verified.
         // NB: the other optional dep, com.intellij.mcpServer, is bundled in IDEA/PyCharm so it
         // resolves fine and needs no exclusion.
-        externalPrefixes = listOf("com.intellij.agent.workbench")
+        // AWB split its API across two roots after the 2026.2 upgrade: some classes still live under
+        // com.intellij.agent.workbench (prompt.core, sessions.state, chat) while session/launch types
+        // moved to com.intellij.platform.ai.agent. Both are AWB-provided, so treat both as external.
+        externalPrefixes = listOf("com.intellij.agent.workbench", "com.intellij.platform.ai.agent")
         ignoredProblemsFile = layout.projectDirectory.file("verifier-ignored-problems.txt")
         // We also knowingly call internal/experimental platform + AWB EPs, so fail only on the real
         // portability breakers, not on internal/experimental/deprecated-API notes.
