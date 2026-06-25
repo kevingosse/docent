@@ -43,7 +43,13 @@ dependencies {
         if (riderLocalPath != null) {
             local(riderLocalPath)
         } else {
-            rider(providers.gradleProperty("riderVersion").get())
+            // useInstaller = false is REQUIRED for Rider: the IJP plugin can't consume Rider's
+            // installer distribution, so we pull the maven artifact (com.jetbrains.intellij.rider:
+            // riderRD) instead. The 262 / 2026.2 platform is still EAP-only, so `riderVersion` is a
+            // `-SNAPSHOT` from the snapshots repo (already part of defaultRepositories()).
+            rider(providers.gradleProperty("riderVersion").get()) {
+                useInstaller = false
+            }
         }
 
         // The in-IDE MCP server: lets us publish McpToolset tools the workbench's agents can call.
