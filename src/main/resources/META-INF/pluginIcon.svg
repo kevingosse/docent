@@ -1,0 +1,17 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="docentCap" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#955AE0"/>
+      <stop offset="1" stop-color="#4F66EF"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#docentCap)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+    <!-- mortarboard top (diamond board) -->
+    <path d="M20 6 35 15 20 24 5 15Z"/>
+    <!-- cap band beneath the board -->
+    <path d="M11 18.5V27C11 27 14.5 31.5 20 31.5 25.5 31.5 29 27 29 27V18.5"/>
+    <!-- tassel -->
+    <path d="M35 15V30"/>
+    <circle cx="35" cy="32.6" r="2"/>
+  </g>
+</svg>
