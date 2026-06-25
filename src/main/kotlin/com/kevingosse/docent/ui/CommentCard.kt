@@ -12,7 +12,10 @@ import java.awt.Color
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import com.intellij.util.ui.AsyncProcessIcon
 import java.awt.event.ActionEvent
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -25,6 +28,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTextPane
 import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
@@ -50,6 +54,12 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     /** When false (no agent connected), the card is read-only: no reply input, no compose/comment buttons. */
     var interactive: Boolean = true
 
+    /** True while a sent remark is awaiting the Docent's reply: the input is replaced by a spinner. */
+    private var waiting = false
+
+    /** The live "Docent is replying…" spinner, while [waiting]; disposed and recreated on each rebuild. */
+    private var spinner: AsyncProcessIcon? = null
+
     private fun isDocent() = thread.author.equals("docent", ignoreCase = true)
     private fun isUser() = thread.author.equals("you", ignoreCase = true)
 
@@ -64,6 +74,8 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     }
 
     private fun rebuild() {
+        spinner?.dispose()
+        spinner = null
         removeAll()
         add(
             when {
@@ -80,12 +92,19 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
 
     /** Send the reviewer's words to the live Docent; append its reply to this thread when it lands (EDT). */
     private fun routeToAgent(reviewerText: String) {
-        val p = poster ?: return
+        val p = poster ?: run { waiting = false; rebuild(); return }
         p.post(thread, reviewerText) { reply ->
+            waiting = false
             thread.replies.add(Reply("docent", reply))
             if (thread.collapsed) thread.collapsed = false
             rebuild()
         }
+    }
+
+    /** Record that a remark was sent and is now awaiting the Docent — swaps the input for the spinner. */
+    private fun beginWaiting() {
+        waiting = true
+        rebuild()
     }
 
     private fun threadView(): JComponent {
@@ -94,21 +113,27 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         content.add(bodyArea(thread.body))
         thread.replies.forEach { content.add(replyView(it)) }
 
+        // A reply is in flight: show the spinner instead of the input until the Docent answers.
+        if (waiting) {
+            content.add(waitingRow())
+            return content
+        }
+
         // Read-only when no agent is connected: show the thread, but no reply affordance.
         if (!interactive) return content
 
+        // The reply box stays compact (one line, no button) until focused — most cards are only read.
         val input = inputArea("Write a reply…  (Ctrl+Enter to send)")
         val send = {
             val text = input.text.trim()
             if (text.isNotEmpty()) {
                 thread.replies.add(Reply("you", text))
+                beginWaiting()
                 routeToAgent(text)
-                rebuild()
             }
         }
         input.onCtrlEnter(send)
-        content.add(input)
-        content.add(row(JButton("Reply").apply { addActionListener { send() } }))
+        content.add(collapsible(input, JButton("Reply").apply { addActionListener { send() } }))
         return content
     }
 
@@ -121,14 +146,22 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     private fun composeView(): JComponent {
         val content = column()
         content.add(authorLabel("you"))
+
+        // A reply is in flight (the compose just sent): show the spinner until the Docent answers.
+        if (waiting) {
+            content.add(waitingRow())
+            return content
+        }
+
+        // Composing is an intentional new comment, so it opens expanded (and focused), unlike the reply box.
         val input = inputArea("Add a comment…  (Ctrl+Enter to send)")
         val send = {
             val text = input.text.trim()
             if (text.isNotEmpty()) {
                 thread.body = text
                 thread.composing = false
+                beginWaiting()
                 routeToAgent(text)
-                rebuild()
             }
         }
         input.onCtrlEnter(send)
@@ -137,7 +170,40 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
             JButton("Comment").apply { addActionListener { send() } },
             JButton("Cancel").apply { addActionListener { onRemove?.invoke() } },
         ))
+        SwingUtilities.invokeLater { input.requestFocusInWindow() }
         return content
+    }
+
+    /** A spinner + "Docent is replying…" shown in place of the input while a remark awaits its reply. */
+    private fun waitingRow(): JComponent {
+        val icon = AsyncProcessIcon("docent-reply").also { spinner = it; it.resume() }
+        return row(icon, JBLabel("Docent is replying…").apply { foreground = JBColor.GRAY })
+    }
+
+    /**
+     * Wrap a reply [input] and its [buttons] so they stay collapsed (one line, buttons hidden) until the
+     * input is focused, expanding to a multi-line area + buttons. Collapses again on blur when left empty.
+     * Saves vertical space on the common read-only pass over a card.
+     */
+    private fun collapsible(input: JBTextArea, vararg buttons: JComponent): JComponent {
+        input.rows = 1
+        val buttonRow = row(*buttons).apply { isVisible = false }
+        fun setExpanded(expanded: Boolean) {
+            input.rows = if (expanded) 2 else 1
+            buttonRow.isVisible = expanded
+            input.revalidate()
+            onChanged?.invoke()
+        }
+        input.addFocusListener(object : FocusAdapter() {
+            override fun focusGained(e: FocusEvent) = setExpanded(true)
+            override fun focusLost(e: FocusEvent) {
+                if (input.text.isBlank()) setExpanded(false)
+            }
+        })
+        return column().apply {
+            add(input)
+            add(buttonRow)
+        }
     }
 
     private fun replyView(reply: Reply): JComponent =

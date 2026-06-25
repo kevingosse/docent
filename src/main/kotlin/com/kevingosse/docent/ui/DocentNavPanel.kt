@@ -337,6 +337,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         if (Messages.showYesNoDialog(project, message, "Complete Review", Messages.getQuestionIcon()) == Messages.YES) {
             service.completeReview()
             updateQueueLabel()
+            controller.closeReview()
         }
     }
 

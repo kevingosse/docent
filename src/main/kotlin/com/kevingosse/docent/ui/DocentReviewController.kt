@@ -355,6 +355,15 @@ class DocentReviewController(private val project: Project) {
         listeners.forEach { it.onSelectionChanged() }
     }
 
+    /**
+     * Close the Docent surfaces once the review is done: the editor review tab (its dispose fires
+     * [onReviewTabClosed], so the nav highlight clears itself) and the nav tool window. Must run on the EDT.
+     */
+    fun closeReview() {
+        FileEditorManager.getInstance(project).closeFile(OpenDocentReviewAction.getOrCreateFile(project))
+        ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.hide()
+    }
+
     companion object {
         const val TOOL_WINDOW_ID = "Docent"
 
