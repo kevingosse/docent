@@ -33,6 +33,9 @@ object DocentDiffMarker {
 
     /** Routes a card's reviewer remark to the live Docent (null → comments stay local). */
     val POSTER: Key<CommentPoster> = Key.create("docent.diff.poster")
+
+    /** Whether interactive comment affordances are enabled (an agent is connected). Absent → treated as true. */
+    val INTERACTIVE: Key<Boolean> = Key.create("docent.diff.interactive")
 }
 
 /**
@@ -49,13 +52,14 @@ class DocentDiffCommentExtension : DiffExtension() {
     override fun onViewerCreated(viewer: FrameDiffTool.DiffViewer, context: DiffContext, request: DiffRequest) {
         val threads = request.getUserData(DocentDiffMarker.THREADS) ?: return
         val poster = request.getUserData(DocentDiffMarker.POSTER)
+        val interactive = request.getUserData(DocentDiffMarker.INTERACTIVE) ?: true
         // The section's focus spans (1-based after-side lines), when this file is focused on regions. Docent
         // comments outside every span belong to another section, so they're shown collapsed.
         val focus = request.getUserData(DocentFocusMarker.RANGES).orEmpty()
         val binding = bindingFor(viewer) ?: return
         val base = viewer as? DiffViewerBase
         if (base == null) {
-            install(binding, threads, poster, focus)
+            install(binding, threads, poster, focus, interactive)
             return
         }
         var installed = false
@@ -63,7 +67,7 @@ class DocentDiffCommentExtension : DiffExtension() {
             override fun onAfterRediff() {
                 if (installed) return
                 installed = true
-                install(binding, threads, poster, focus)
+                install(binding, threads, poster, focus, interactive)
             }
         })
     }
@@ -92,7 +96,7 @@ class DocentDiffCommentExtension : DiffExtension() {
         else -> null
     }
 
-    private fun install(binding: Binding, threads: MutableList<CommentThread>, poster: CommentPoster?, focus: List<IntRange>) {
+    private fun install(binding: Binding, threads: MutableList<CommentThread>, poster: CommentPoster?, focus: List<IntRange>, interactive: Boolean) {
         val editor = binding.editor
         val document = editor.document
         fun lastLine() = (document.lineCount - 1).coerceAtLeast(0)
@@ -106,7 +110,7 @@ class DocentDiffCommentExtension : DiffExtension() {
             val editorLine = binding.afterToEditor(thread.line - 1)
             if (editorLine < 0) return
             val offset = document.getLineStartOffset(editorLine.coerceIn(0, lastLine()))
-            val card = CommentCard(thread).apply { this.poster = poster }
+            val card = CommentCard(thread).apply { this.poster = poster; this.interactive = interactive }
             val inlay = EditorEmbeddedComponentManager.getInstance().addComponent(
                 editor,
                 card,
@@ -135,6 +139,10 @@ class DocentDiffCommentExtension : DiffExtension() {
         }
 
         threads.toList().forEach { embed(it) }
+
+        // The gutter "+" (adding new comments) requires a connected agent — without one, the review is read-only,
+        // so skip it entirely. Seeded Docent comments above still render (read-only via the card's interactive flag).
+        if (!interactive) return
 
         // GitHub-style "+" in the gutter, following the caret — but only on lines that exist on the
         // "after" side (so you can't comment on a deleted line in the unified view).

@@ -8,21 +8,25 @@ import com.intellij.agent.workbench.common.session.AgentSessionLaunchMode
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.kevingosse.docent.DocentReviewService
+import com.kevingosse.docent.EventLog
 import com.kevingosse.docent.EventNotifier
 import com.kevingosse.docent.ReviewEvent
 
 /**
- * Pushes a reviewer action straight into the driving agent's existing workbench thread, so the agent never
- * has to long-poll `docent_await_event` (which Claude Code's ~60s HTTP MCP timeout makes token-expensive —
- * see [DocentReviewService]). Installed onto the service by [DocentLaunchContributor] when a Claude session
- * launches; the [DocentReviewService.agentThreadId] it captured there is the thread we target.
+ * Pushes a reviewer event straight into an agent's existing workbench thread. In the Monitor-delivery world
+ * this is needed for exactly one case: waking an *idle* agent the human picked in "Connect agent…" with a
+ * `REVIEW_RESUMED` event (it isn't in a turn, so there's no other way to reach it). The pushed message hands
+ * the agent its role *and the watch command* for this review's [EventLog]; ongoing reviewer actions then flow
+ * through that file watch, not through here. Installed onto the service by [DocentLaunchContributor] /
+ * [DocentWorkbenchSetup]; the [DocentReviewService.agentThreadId] captured at link time is the thread we target.
  *
  * Uses the workbench prompt-launcher bridge (`AgentPromptLaunchers.find().launch(...)` with `targetThreadId`),
  * the same "send to an existing session" path the global prompt palette uses. The bridge dispatches the
  * send asynchronously on its own scope, so this is safe to call from the EDT and returns promptly.
  *
  * It's `@Internal`/unstable workbench API → lives in the optional, gated `awb/` module. Every workbench-API
- * touch is wrapped defensively; any failure returns false so the broker falls back to the enqueue/poll path.
+ * touch is wrapped defensively; any failure returns false (the review is still armed — the agent can be told
+ * to resume manually).
  */
 internal class DocentEventNotifier(private val project: Project) : EventNotifier {
 
@@ -70,6 +74,35 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 appendLine("The reviewer has completed the review. Implement the queued changes now (editing is")
                 appendLine("allowed); there is nothing more to wait for after this. Queued changes:")
                 appendLine(event.text.ifBlank { "(none)" })
+            }
+
+            DocentReviewService.REVIEW_RESUMED -> {
+                append("The reviewer opened a Docent review")
+                if (event.text.isNotBlank()) append(" for \"${event.text}\"")
+                appendLine(" and connected you as the Docent.")
+                if (event.file.isNotBlank()) appendLine("Trail file: ${event.file}")
+                appendLine(
+                    "Read the trail file now to refresh the WHY (the narration and inline comments) — your earlier " +
+                        "context may be gone.",
+                )
+                val logPath = DocentReviewService.getInstance(project).eventLogPath
+                if (logPath != null) {
+                    appendLine()
+                    appendLine("Then watch this review's events with the Monitor tool (persistent: true), running EXACTLY this command:")
+                    appendLine("  " + EventLog.watchCommand(logPath))
+                    appendLine(
+                        "Each line it prints is one reviewer action (JSON): answer questions with docent_reply " +
+                            "(using the event id), record requested changes with docent_queue_change (read-only — " +
+                            "do NOT edit files until review_completed, at which point the watch exits and you " +
+                            "implement them). Start the watch, then end your turn.",
+                    )
+                } else {
+                    appendLine(
+                        "Then drive the review with docent_await_event (it blocks until the reviewer acts): answer " +
+                            "questions with docent_reply, record requested changes with docent_queue_change " +
+                            "(read-only — do NOT edit files until review_completed).",
+                    )
+                }
             }
 
             else -> {

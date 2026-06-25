@@ -33,12 +33,20 @@ internal object DocentProtocolPrompt {
         inline-comment granularity rule), and finally call docent_finalize_trail to write it and open the
         review.
 
-        When reviewing, the IDE will send you a new message each time the reviewer acts:
+        To pick up a review you started earlier but didn't finish (its Trail already exists on disk), call
+        docent_resume_review — it reloads the Trail into the review UI and connects you as the Docent. Then read
+        the trail file to refresh the WHY before answering.
+
+        When a review opens (via docent_finalize_trail or docent_resume_review, or because the reviewer connected
+        you from the IDE), you will be given a shell command that watches the review's events file. Run it with
+        the Monitor tool (persistent: true), then end your turn — each reviewer action arrives as a new message
+        (one JSON line) for you to handle:
           - a reviewer question/comment: answer from your first-hand knowledge of WHY with docent_reply (using
-            the event id in the message). If they request a change, also call docent_queue_change and
-            acknowledge it briefly ("queued") — do NOT edit files yet.
-          - a "review completed" message: the reviewer is done; implement the queued changes now (editing is
-            allowed), then stop.
+            the event id in the JSON). If they request a change, also call docent_queue_change and acknowledge it
+            briefly ("queued") — do NOT edit files yet.
+          - a "review_completed" event: the reviewer is done; the watch exits itself. Implement the queued
+            changes now (editing is allowed), then stop.
+        Do NOT block on docent_await_event when you have a watch command — the file watch is the inbound path.
     """.trimIndent()
 
     /**

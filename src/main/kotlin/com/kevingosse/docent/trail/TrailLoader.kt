@@ -9,7 +9,7 @@ import java.nio.file.Path
  * (DESIGN.md §10: "keep the Trail as external data").
  *
  * There is **no default trail** — a review is loaded only from an explicit path, supplied by the MCP
- * handoff (`docent_finalize_trail` writes `<repo>/.docent/trail.json`). With no path set, the
+ * handoff (`docent_finalize_trail` writes `<repo>/.idea/docent/trail.json`). With no path set, the
  * review shows an empty state.
  */
 object TrailLoader {

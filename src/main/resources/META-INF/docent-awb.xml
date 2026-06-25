@@ -1,15 +1,16 @@
 <idea-plugin>
     <!-- Loaded only when com.intellij.agent.workbench is present (see plugin.xml's optional <depends>).
-         Enables the AWB registry key that activates the direct-HTTP MCP path, so workbench-launched
-         agents reach the IDE's in-process MCP server (where DocentMcpToolset publishes the docent_* tools).
+         Installs the Docent's workbench seams (session directory + push notifier) at project open so the
+         "Connect agent…" UI and the review push path are available whenever the workbench is present.
 
-         Rider 262 note: the workbench now resolves the MCP stream URL itself (bundled
-         container.mcp.ContainerMcpStreamUrlProvider) and builds the agent's mcp-config via
-         AwbMcpConfigBuilder, gated on this registry key. We therefore no longer ship our own
-         mcpStreamUrlProvider — the 261 interface com.intellij.agent.workbench.container.McpStreamUrlProvider
-         was removed in 262. Installing this plugin is implicit consent to the integration. -->
+         NB: we do NOT enable the AWB direct-HTTP MCP path (agent.workbench.mcp.use.direct.http). It defaults
+         to false → the agent reaches the IDE MCP server via the user's .mcp.json (ij-proxy stdio), which is the
+         working path here and is exempt from Claude Code's 60s HTTP first-byte timeout. See DocentWorkbenchSetup. -->
     <extensions defaultExtensionNs="com.intellij">
-        <startupActivity implementation="com.kevingosse.docent.awb.EnableAwbDirectHttp"/>
+        <!-- ProjectActivity. The EP is `postStartupActivity` (interface ProjectActivity) — there is NO
+             `startupActivity` EP in the platform (262: only postStartupActivity / backgroundPostStartupActivity),
+             so the old `<startupActivity>` tag registered against a non-existent EP and silently never ran. -->
+        <postStartupActivity implementation="com.kevingosse.docent.awb.DocentWorkbenchSetup"/>
     </extensions>
 
     <!-- Inject the Docent protocol into a workbench-launched agent's system prompt at launch, so it knows

@@ -5,6 +5,7 @@ import com.intellij.agent.workbench.sessions.core.launch.AgentSessionLaunchContr
 import com.intellij.agent.workbench.sessions.core.providers.AgentSessionTerminalLaunchSpec
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
+import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 
 /**
@@ -16,9 +17,8 @@ import com.kevingosse.docent.DocentReviewService
  * gated `docent-awb.xml`), mirroring the bundled `AwbMcpConfigContributor`. Fires on every new and resumed
  * launch; returns the [launchSpec] unchanged for any provider we don't (yet) handle.
  *
- * The `docent_*` tools are already reachable by a workbench-launched **Claude** agent — [EnableAwbDirectHttp]
- * flips the registry key 262's `AwbMcpConfigBuilder` reads to wire the IDE's in-process MCP server (`ij`)
- * into Claude's `--mcp-config`. So Claude needs only the instruction; no extra MCP plumbing here.
+ * The `docent_*` tools are reachable by a workbench-launched **Claude** agent via the user's `.mcp.json`
+ * (the ij-proxy stdio path), so Claude needs only the instruction; no extra MCP plumbing here.
  */
 internal class DocentLaunchContributor : AgentSessionLaunchContributor {
 
@@ -31,14 +31,19 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
         return try {
             when (provider) {
                 AgentSessionProvider.CLAUDE -> {
-                    // This session's workbench thread id (== the Claude --session-id) is the push target for
-                    // review events (see DocentEventNotifier). We do NOT store it globally on the service —
-                    // every Claude launch (including background rename/probe launches) would clobber it and the
-                    // push would race to the wrong session. Instead we inject it into THIS session's system
-                    // prompt as a token; the agent passes it back as docent_finalize_trail's
-                    // sessionToken, so the session that arms the review self-identifies as the push target.
+                    // This session's workbench thread id (== the Claude --session-id) is the push target for the
+                    // one event that still pushes — the UI-initiated resume (see DocentEventNotifier). We do NOT
+                    // store it globally on the service — every Claude launch (including background rename/probe
+                    // launches) would clobber it and the push would race to the wrong session. Instead we inject
+                    // it into THIS session's system prompt as a token; the agent passes it back as
+                    // docent_finalize_trail's sessionToken, so the session that arms the review self-identifies.
+                    //
+                    // Claude reaches reviewer actions by WATCHING the EventLog file (DeliveryMode.MONITOR) — not
+                    // by blocking on docent_await_event — so no MCP_TOOL_TIMEOUT env hack is needed: the inbound
+                    // path no longer rides an MCP tool call at all.
                     val threadId = resolveThreadId(sessionId, launchSpec)
                     registerPushTarget(projectPath)
+                    LOG.info("Docent: Claude launch — injecting Docent protocol (Monitor delivery, thread=$threadId)")
                     launchSpec.copy(command = injectClaudeSystemPrompt(launchSpec.command, threadId))
                 }
 
@@ -108,8 +113,14 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
             return
         }
         val service = DocentReviewService.getInstance(project)
+        service.deliveryMode = DeliveryMode.MONITOR // Claude watches the EventLog file; it does not block on await
         service.agentProjectPath = projectPath
         service.eventNotifier = DocentEventNotifier(project)
+        // Also (re)install the session directory + launcher here, not only in DocentWorkbenchSetup's project-open
+        // activity: a launch is concrete proof the workbench is present, so the "Connect agent…" picker is
+        // guaranteed to have them after any session launches (independent of the startup activity having run).
+        service.sessionDirectory = WorkbenchSessionDirectory(project)
+        service.sessionLauncher = WorkbenchAgentLauncher(project)
     }
 
     /** Last-resort thread id: the `--session-id <id>` already on the Claude command line. */

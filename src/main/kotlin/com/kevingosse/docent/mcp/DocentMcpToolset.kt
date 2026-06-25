@@ -11,11 +11,15 @@ import com.intellij.mcpserver.projectOrNull
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.kevingosse.docent.DecisionLog
+import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
+import com.kevingosse.docent.EventLog
 import com.kevingosse.docent.ReviewEvent
+import com.kevingosse.docent.ReviewEventEnvelope
 import com.kevingosse.docent.trail.Comment
 import com.kevingosse.docent.trail.GitChangeSet
 import com.kevingosse.docent.trail.Trail
+import com.kevingosse.docent.trail.TrailLoader
 import com.kevingosse.docent.ui.DocentReviewController
 import java.nio.file.Files
 import java.nio.file.Path
@@ -70,16 +74,14 @@ class DocentMcpToolset : McpToolset {
     @McpTool
     @McpDescription(
         """
-        |CATCH-UP ONLY — you normally do NOT call this. During a review the IDE PUSHES each reviewer action to
-        |you as a new message, so you just respond and end your turn; you never need to poll or wait. Call this
-        |tool only if you suspect a pushed message was lost (e.g. you were mid-task when the reviewer acted). It
-        |returns the next pending action if one is queued, as a small JSON envelope:
+        |Block until the reviewer's next action and return it as a small JSON envelope. Use this ONLY if your
+        |instructions told you to poll — i.e. you were NOT given a shell command to watch the review's events
+        |file. (If you were given a watch command, use THAT; this tool will just sit idle.) Envelopes:
         |  - {"event":"message"|"comment", "id", ...}: answer with docent_reply using the same id; if they ask
-        |    for a change, also call docent_queue_change.
+        |    for a change, also call docent_queue_change, then call this tool again.
         |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes.
-        |Do NOT loop on this tool: it blocks until something is pending, and a quiet review keeps it open for
-        |many minutes (and your client may time it out — that is expected, not an error). Prefer waiting for the
-        |pushed messages.
+        |It blocks until something is pending (no server-side timeout); keep calling it after each event until
+        |review_completed.
         """
     )
     suspend fun docent_await_event(): String {
@@ -134,6 +136,53 @@ class DocentMcpToolset : McpToolset {
         return "Queued change #$count. It will be applied when the reviewer completes the review."
     }
 
+    @McpTool
+    @McpDescription(
+        """
+        |Resume a review on a Trail that was already authored — its JSON exists on disk (e.g. you stopped before
+        |walking the human through it and want to pick it up now). This loads the Trail into the IDE review UI and
+        |arms the live loop with you as the Docent; you do NOT re-author or re-write it. Because your earlier
+        |context may be gone, READ the trail file after this so you can answer from its recorded WHY (the
+        |narration and inline comments), not from memory. Pass your sessionToken (from your system instructions)
+        |so the reviewer's actions route back to THIS session. Defaults to <repo>/.idea/docent/trail.json.
+        |After this, drive the review exactly as after docent_finalize_trail: the IDE pushes each reviewer action
+        |to you; reply with docent_reply, record requested changes with docent_queue_change (read-only until the
+        |reviewer completes the review).
+        """
+    )
+    @Suppress("SENSELESS_COMPARISON") // Gson/TrailLoader can leave required fields null when JSON omits them.
+    suspend fun docent_resume_review(
+        @McpDescription("Path to the Trail JSON. Relative paths resolve against the project root. Blank → .idea/docent/trail.json.")
+        path: String = "",
+        @McpDescription(
+            "Your sessionToken from your system instructions, so the live review can message you (it routes the " +
+                "reviewer's actions back to THIS session). Omit only if you have no sessionToken."
+        )
+        sessionToken: String = "",
+    ): String {
+        val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
+        val base = project.basePath ?: return "The project has no base path on disk."
+
+        val abs = path.trim().let {
+            when {
+                it.isBlank() -> Path.of(base, ".idea", "docent", "trail.json")
+                else -> Path.of(it).let { p -> if (p.isAbsolute) p else Path.of(base, it) }
+            }
+        }
+        if (!Files.exists(abs)) {
+            return "No Trail file at $abs. Author one with docent_finalize_trail first, or pass the correct path."
+        }
+        val trail = try {
+            TrailLoader.load(abs)
+        } catch (t: Throwable) {
+            return "Couldn't read the Trail at $abs (${t.message}). It must be a valid Trail JSON object."
+        }
+        if (trail == null || trail.subject == null || trail.sections == null || trail.sections.isEmpty()) {
+            return "The Trail at $abs is missing a subject or sections[]; it doesn't look like a finalized Trail."
+        }
+        return armReview(project, abs.toString(), trail, sessionToken)
+    }
+
     /**
      * Point the review UI at [path], arm the live loop, and return the agent's drive-the-review instructions.
      * Called by [docent_finalize_trail] after writing the Trail to open the review.
@@ -142,40 +191,43 @@ class DocentMcpToolset : McpToolset {
         val service = DocentReviewService.getInstance(project)
         service.reset()
         service.trailPath = path
-        service.reviewActive = true
         // The session that arms the review self-identifies via the sessionToken it echoed from its system
         // prompt (= its workbench thread id). This is the push target — captured here, not from the racy
         // last-launch capture, so review messages route to THIS session. Blank → no push; falls back to poll.
-        service.agentThreadId = sessionToken.trim().ifBlank { null }
+        // linkAgentSession marks the review active and notifies the UI so its affordances enable.
+        service.linkAgentSession(sessionToken.trim().ifBlank { null })
         ApplicationManager.getApplication().invokeLater {
             val controller = DocentReviewController.getInstance(project)
             controller.loadTrail() // force-load the handed-off path, then show nav + review
             controller.openReview()
         }
 
-        val pushArmed = service.agentThreadId != null
+        val logPath = service.eventLogPath
+        val monitor = service.deliveryMode == DeliveryMode.MONITOR && logPath != null
         return buildString {
             appendLine("Opened the Docent review for \"${trail.subject}\" (${trail.sections.size} sections).")
             appendLine("You are now the live Docent — the author of this change, walking the human through it.")
             appendLine()
-            if (pushArmed) {
-                appendLine("You do NOT need to poll or wait. End your turn now. The IDE will send you a NEW message each")
-                appendLine("time the reviewer acts; respond to each and end your turn again:")
+            if (monitor) {
+                appendLine("Watch this review's events with the Monitor tool (persistent: true), running EXACTLY this command:")
+                appendLine()
+                appendLine("  " + EventLog.watchCommand(logPath!!))
+                appendLine()
+                appendLine("Each line it prints is one reviewer action, as JSON. For each:")
             } else {
-                appendLine("NOTE: no sessionToken was provided, so the IDE cannot push messages to you. You must drive the")
-                appendLine("review by calling docent_await_event yourself (it blocks until the reviewer acts). For each event:")
+                appendLine("Drive the review by calling docent_await_event (it blocks until the reviewer acts). For each event:")
             }
             appendLine("  - a reviewer question/comment: answer from your first-hand knowledge of WHY (not a restatement")
-            appendLine("    of the diff) via docent_reply(eventId, text) using the event id given in the message. If they")
-            appendLine("    request a change, also call docent_queue_change(...) and acknowledge it briefly (\"queued\") —")
-            appendLine("    do NOT edit files yet, and don't pre-describe the implementation.")
-            appendLine("  - a \"review completed\" message: the reviewer is done. NOW implement the queued changes")
+            appendLine("    of the diff) via docent_reply(eventId, text) using the event id in the JSON. If they request")
+            appendLine("    a change, also call docent_queue_change(...) and acknowledge it briefly (\"queued\") — do NOT")
+            appendLine("    edit files yet, and don't pre-describe the implementation.")
+            appendLine("  - a \"review_completed\" event: the reviewer is done. NOW implement the queued changes")
             appendLine("    (editing is allowed), then stop.")
             appendLine()
-            if (pushArmed) {
-                appendLine("Do NOT call docent_await_event in a loop — pushed messages arrive on their own. It exists only as")
-                appendLine("a catch-up tool if you ever suspect a pushed message was missed.")
-                append("So: confirm the review is open, then end your turn and wait to be messaged.")
+            if (monitor) {
+                appendLine("Start the Monitor watch now, then end your turn — each printed line arrives as a new message for")
+                appendLine("you to handle. The watch exits itself on review_completed; do NOT also call docent_await_event.")
+                append("So: confirm the review is open, start the Monitor watch, and end your turn.")
             } else {
                 append("Start now by calling docent_await_event, and keep calling it after each event until review_completed.")
             }
@@ -302,7 +354,7 @@ class DocentMcpToolset : McpToolset {
     @McpDescription(
         """
         |Finish authoring: take the Trail you synthesized from your recorded decisions, validate it against the
-        |actual change-set, write it to <repo>/.docent/trail.json, and open the review on it — at which point
+        |actual change-set, write it to <repo>/.idea/docent/trail.json, and open the review on it — at which point
         |you become the live Docent. The Trail is diffed against the working tree, so baseRef is
         |forced onto it (any `commit` field is ignored). Each comment's `anchorText` is resolved to the real
         |working-tree line here, so quoted snippets beat hand-counted line numbers. Validation flags anchors that
@@ -351,7 +403,7 @@ class DocentMcpToolset : McpToolset {
             warnings.add("no decisions were recorded during authoring — the narrative may be reconstructed from memory rather than a log (DESIGN §7).")
         }
 
-        val file = Path.of(base, ".docent", "trail.json")
+        val file = Path.of(base, ".idea", "docent", "trail.json")
         try {
             Files.createDirectories(file.parent)
             Files.writeString(file, GsonBuilder().setPrettyPrinting().create().toJson(trail))
@@ -433,32 +485,8 @@ class DocentMcpToolset : McpToolset {
         return arr
     }
 
-    private fun eventJson(event: ReviewEvent): String {
-        val o = JsonObject()
-        o.addProperty("event", event.kind)
-        when (event.kind) {
-            DocentReviewService.REVIEW_COMPLETED -> {
-                o.addProperty("queuedChanges", event.text.ifBlank { "(none)" })
-                o.addProperty(
-                    "hint",
-                    "The reviewer finished. Implement the queued changes now (you may edit files), " +
-                        "then stop calling docent_await_event.",
-                )
-            }
-
-            else -> {
-                o.addProperty("id", event.id)
-                if (event.sectionIndex >= 0) o.addProperty("section", event.sectionIndex + 1)
-                if (event.sectionHeadline.isNotBlank()) o.addProperty("sectionHeadline", event.sectionHeadline)
-                if (event.file.isNotBlank()) o.addProperty("file", event.file)
-                if (event.line > 0) o.addProperty("line", event.line)
-                if (event.context.isNotBlank()) o.addProperty("context", event.context)
-                o.addProperty("reviewer", event.text)
-                o.addProperty("hint", "Answer with docent_reply(\"${event.id}\", ...); then call docent_await_event again.")
-            }
-        }
-        return o.toString()
-    }
+    /** The await path's envelope: same JSON the [EventLog] file carries, but with poll-flavored hints. */
+    private fun eventJson(event: ReviewEvent): String = ReviewEventEnvelope.toJson(event, monitor = false)
 
     private fun errorJson(message: String): String =
         JsonObject().apply { addProperty("event", "error"); addProperty("message", message) }.toString()

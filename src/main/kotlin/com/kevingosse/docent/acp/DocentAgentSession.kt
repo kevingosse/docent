@@ -14,6 +14,13 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 /**
+ * RETAINED FOR THE FUTURE CRITIC (not currently wired): this spawns and drives our own `claude-agent-acp` over
+ * [AcpClient]. It was the no-workbench self-spawn conversation backend, which we dropped — interactive review
+ * now requires a connected workbench agent. The class is kept (not deleted) because it is the spawn-a-second-
+ * agent foundation for the planned "Request code review → different-model critic" (docs/STATUS.md "What's left"):
+ * a read-only critic that drops distinct inline comments. Adapt the priming/turn shape there; the [AcpClient]
+ * transport is reusable as-is.
+ *
  * The live Docent (docs/DESIGN.md §6/§8) — **the coding agent that authored the change**, connected over
  * our hand-rolled [AcpClient] and talked to by the UI *directly*. It is **not** a separate reviewer: it
  * knows the change first-hand, so it answers the human's questions from real knowledge, and it owns the

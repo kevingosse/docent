@@ -20,6 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger
 class AcpError(message: String) : RuntimeException(message)
 
 /**
+ * RETAINED FOR THE FUTURE CRITIC (not currently wired): the only caller, the self-spawn conversation backend,
+ * was dropped (interactive review now requires a connected workbench agent). This transport is kept because it
+ * is reusable as-is for the planned "Request code review → different-model critic" (docs/STATUS.md) — spawning a
+ * second, different-model agent over stdio. See [DocentAgentSession].
+ *
  * Minimal hand-rolled ACP client (docs/DESIGN.md §6): JSON-RPC 2.0 framed as NDJSON over a child
  * process's stdio. Deliberately **not** the official Kotlin ACP SDK — this keeps us platform-clean
  * (loads in Rider / IDEA-CE at build 243) with zero new dependencies (Gson is already on the platform

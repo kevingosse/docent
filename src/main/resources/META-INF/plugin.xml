@@ -16,9 +16,9 @@
     <!-- Optional: when the in-IDE MCP server is present, publish the Docent handoff tools so a
          workbench-launched coding agent can call them. The core plugin loads fine without it. -->
     <depends optional="true" config-file="docent-mcp.xml">com.intellij.mcpServer</depends>
-    <!-- Optional: when the Agent Workbench is installed, wire the IDE MCP URL into AWB sessions so
-         workbench-launched Claude agents see the IDE's MCP tools. Also enables the AWB registry key
-         that activates this path (agent.workbench.mcp.use.direct.http). -->
+    <!-- Optional: when the Agent Workbench is installed, install the Docent's workbench seams (session
+         directory for "Connect agent…", and the push notifier) and inject the Docent protocol at launch.
+         The agent reaches the IDE MCP tools via the user's .mcp.json (stdio); we don't force direct-HTTP. -->
     <depends optional="true" config-file="docent-awb.xml">com.intellij.agent.workbench</depends>
 
     <extensions defaultExtensionNs="com.intellij">

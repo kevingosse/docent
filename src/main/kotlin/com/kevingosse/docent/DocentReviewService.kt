@@ -23,17 +23,28 @@ import java.util.concurrent.atomic.AtomicLong
  * driving (review opened from the Tools menu, or the `runRider` sandbox), [reviewActive] is false and the
  * UI falls back to a self-spawned agent instead (see `ui/DocentConversationBackend`).
  *
- * **Push, not poll (the token fix).** A workbench-launched Claude agent CANNOT efficiently long-poll
- * [awaitEvent]: that call rides the IDE's streamable-HTTP MCP transport, which Claude Code caps at a
- * hardcoded ~60s first-byte timeout that `MCP_TOOL_TIMEOUT` can't raise — so a silent wait trips every
- * minute and each re-call burns a model turn. Instead we **push**: when the human acts, [postEvent] /
- * [completeReview] ask the registered [EventNotifier] to send a prompt straight into the agent's existing
- * workbench thread (it wakes, replies via `docent_reply`, and ends its turn — zero idle turns). The
- * notifier is installed by the optional AWB module (`awb/DocentEventNotifier`); when it's absent or a push
- * fails, we fall back to enqueuing for [awaitEvent] (the legacy poll path, also the catch-up safety net).
+ * **How the human's actions reach the agent (the timeout fix).** A blocking `docent_await_event` is a
+ * dead end against Claude Code — its MCP tool calls die at a stack of undocumented client timeouts (60s
+ * request, ~5min SSE idle) that no env knob reliably lifts. So the inbound path depends on the connected
+ * agent's [deliveryMode]:
+ *  - **[DeliveryMode.MONITOR]** (Claude Code): every action is appended to a per-review [EventLog] file the
+ *    agent watches with its background-watch tool — events reach it as chat notifications, entirely OUTSIDE
+ *    any MCP tool-call budget. The only MCP traffic left is the agent's short replies. This is the path today.
+ *  - **[DeliveryMode.AWAIT]** (a future provider with sane MCP timeouts): actions are enqueued and the agent
+ *    drains them by blocking on [awaitEvent].
+ *
+ * Either way the UI registers a reply sink per event ([replySinks]); [deliverReply] routes the agent's answer
+ * back regardless of how the event was delivered. The one thing that still **pushes** into the agent's thread
+ * is the UI-initiated *resume* (`linkAgentSession` + a `REVIEW_RESUMED` notify) — there's no other way to
+ * wake an idle agent the human picked in "Connect agent…"; after that bootstrap the agent watches the file.
  */
 @Service(Service.Level.PROJECT)
-class DocentReviewService {
+class DocentReviewService(private val project: Project) {
+
+    /** How reviewer actions reach the connected agent (see the class doc). Set by the launch contributor from
+     *  the provider (Claude → MONITOR); defaults to MONITOR, the only wired provider today. */
+    @Volatile
+    var deliveryMode: DeliveryMode = DeliveryMode.MONITOR
 
     /** Path to the Trail JSON for the current review; null → no trail is loaded (the review shows an
      *  empty state). There is no default — a trail is loaded only via the MCP handoff or finalize. */
@@ -53,6 +64,21 @@ class DocentReviewService {
     @Volatile
     var onChangesUpdated: (() -> Unit)? = null
 
+    /** Called whenever the agent-connection state ([reviewActive]) flips, so open views can enable/disable
+     *  their interactive affordances (the section conversation, the inline-comment "+") live. May fire off-EDT. */
+    @Volatile
+    var onConnectionChanged: (() -> Unit)? = null
+
+    /** Lists the live agent sessions the UI can link a loaded trail to. Installed by the optional AWB module
+     *  ([com.kevingosse.docent.awb.WorkbenchSessionDirectory]); null when the workbench isn't present. */
+    @Volatile
+    var sessionDirectory: AgentSessionDirectory? = null
+
+    /** Starts a brand-new agent session (with an initial prompt) for the UI's "start a new session" option.
+     *  Installed by the optional AWB module; null when the workbench isn't present. */
+    @Volatile
+    var sessionLauncher: AgentSessionLauncher? = null
+
     /** The workbench thread id of the agent driving the review (the Claude `--session-id`), captured at
      *  launch by the AWB module. The [EventNotifier] targets this thread when it pushes an event. */
     @Volatile
@@ -63,10 +89,19 @@ class DocentReviewService {
     @Volatile
     var agentProjectPath: String? = null
 
-    /** Pushes a human action straight into the driving agent's workbench thread, so it doesn't have to
-     *  long-poll. Installed by the optional AWB module; null when the workbench isn't present. */
+    /** Pushes the UI-initiated *resume* into the picked agent's workbench thread (the one case that still needs
+     *  a push — see the class doc). Installed by the optional AWB module; null when the workbench isn't present. */
     @Volatile
     var eventNotifier: EventNotifier? = null
+
+    /** The current review's append-only event log (MONITOR mode); the agent watches it. Null until a review is
+     *  armed via [linkAgentSession]. Replaced (fresh file) on each new review. */
+    @Volatile
+    var eventLog: EventLog? = null
+        private set
+
+    /** The project-root-relative path of [eventLog], for the watch command handed to the agent. Null when none. */
+    val eventLogPath: String? get() = eventLog?.relativePath
 
     // Human → agent: a single-consumer queue (the agent's await loop) the UI offers events onto.
     private val events = LinkedBlockingQueue<ReviewEvent>()
@@ -91,15 +126,23 @@ class DocentReviewService {
     ): String {
         val id = "evt-${idGen.incrementAndGet()}"
         replySinks[id] = onReply
-        val event = ReviewEvent(id, kind, sectionIndex, sectionHeadline, file, line, context, text)
-        // Push into the agent's thread; only enqueue (for awaitEvent) if there's no notifier or it fails.
-        if (!tryPush(event)) events.offer(event)
+        dispatch(ReviewEvent(id, kind, sectionIndex, sectionHeadline, file, line, context, text))
         return id
     }
 
-    /** Try to push [event] straight to the driving agent. Returns true if the notifier accepted it. */
-    private fun tryPush(event: ReviewEvent): Boolean =
-        runCatching { eventNotifier?.notifyAgent(event) ?: false }.getOrDefault(false)
+    /**
+     * Deliver [event] to the connected agent by the active [deliveryMode]: MONITOR appends it to the [eventLog]
+     * file the agent watches; AWAIT (or MONITOR with no log armed yet) enqueues it for [awaitEvent]. Note this
+     * never pushes — the only push is the UI-initiated resume in [linkAgentSession]'s caller.
+     */
+    private fun dispatch(event: ReviewEvent) {
+        val log = eventLog
+        if (deliveryMode == DeliveryMode.MONITOR && log != null) {
+            log.append(ReviewEventEnvelope.toJson(event, monitor = true))
+        } else {
+            events.offer(event)
+        }
+    }
 
     /** Stop routing replies for an event (its UI element was disposed). */
     fun cancelSink(id: String) {
@@ -135,6 +178,26 @@ class DocentReviewService {
 
     fun queuedChanges(): List<QueuedChange> = changes.toList()
 
+    /**
+     * Arm the live loop against a specific agent session: [threadId] is the push target (the workbench thread
+     * id / Claude `--session-id`), or null when there's no push target (the agent must poll). Used by both the
+     * MCP arm path (the arming session self-identifies via its sessionToken) and the UI "Connect agent…" path
+     * (the user picked the session, so the thread id is known authoritatively). Marks the review active and
+     * notifies the UI so its interactive affordances enable.
+     */
+    fun linkAgentSession(threadId: String?) {
+        agentThreadId = threadId?.takeIf { it.isNotBlank() }
+        beginEventLog()
+        reviewActive = true
+        onConnectionChanged?.invoke()
+    }
+
+    /** Start a fresh per-review event log (MONITOR mode), so this review's watch never sees a prior review's
+     *  messages. No-op (leaves [eventLog] null → events fall back to the queue) if the project has no base path. */
+    private fun beginEventLog() {
+        eventLog = project.basePath?.let { EventLog.begin(it, idGen.incrementAndGet().toString()) }
+    }
+
     /** Human pressed "Complete review": hand the agent the queue to implement (editing now allowed). */
     fun completeReview() {
         val summary = changes.joinToString("\n") { c ->
@@ -144,29 +207,71 @@ class DocentReviewService {
                 if (c.file.isNotBlank()) append("  (${c.file}${if (c.line > 0) ":${c.line}" else ""})")
             }
         }
-        val event = ReviewEvent(id = "", kind = REVIEW_COMPLETED, text = summary)
-        if (!tryPush(event)) events.offer(event)
+        dispatch(ReviewEvent(id = "", kind = REVIEW_COMPLETED, text = summary))
         reviewActive = false
+        onConnectionChanged?.invoke()
     }
 
     /** Tear down any in-flight loop state (new review, or "Reload trail"). */
     fun reset() {
         reviewActive = false
         loopEngaged = false
+        eventLog = null
         events.clear()
         replySinks.clear()
         changes.clear()
         onChangesUpdated?.invoke()
+        onConnectionChanged?.invoke()
     }
 
     companion object {
         const val REVIEW_COMPLETED = "review_completed"
+        const val REVIEW_RESUMED = "review_resumed"
         const val KIND_MESSAGE = "message"
         const val KIND_COMMENT = "comment"
 
         fun getInstance(project: Project): DocentReviewService =
             project.getService(DocentReviewService::class.java)
     }
+}
+
+/** How reviewer actions reach the connected agent (see [DocentReviewService]'s class doc). */
+enum class DeliveryMode {
+    /** Append each action to the [EventLog] file the agent watches with its background-watch tool (Claude Code). */
+    MONITOR,
+
+    /** Enqueue each action for the agent to drain by blocking on `docent_await_event` (sane-MCP-timeout provider). */
+    AWAIT,
+}
+
+/** A live agent session the UI can link a loaded trail to (see [AgentSessionDirectory]). */
+data class AgentSessionInfo(
+    /** The workbench thread id (== Claude `--session-id`); the push target for review events. */
+    val threadId: String,
+    val title: String,
+    val provider: String,
+    /** Epoch millis the session was last active, for ordering/display. */
+    val updatedAt: Long,
+)
+
+/**
+ * Lists the live agent sessions a loaded trail can be connected to. Implemented by the optional AWB module
+ * (`awb/WorkbenchSessionDirectory`), which reads the workbench's session store. Kept as a plain interface here
+ * so the core stays platform-clean (no workbench dependency leaks in).
+ */
+interface AgentSessionDirectory {
+    fun listSessions(): List<AgentSessionInfo>
+}
+
+/**
+ * Starts a fresh agent session seeded with [initialPrompt], for the UI's "start a new session" option. Used to
+ * resume a review when no suitable existing session is connectable (e.g. only a brand-new, not-yet-started tab
+ * exists, which has no id to target). The launched agent is told to call `docent_resume_review`, which arms the
+ * loop and pins the push target via its sessionToken — so the UI need not know the new session's id. Implemented
+ * by the optional AWB module (`awb/WorkbenchAgentLauncher`). Returns true if the launch was accepted.
+ */
+interface AgentSessionLauncher {
+    fun startSession(initialPrompt: String): Boolean
 }
 
 /** One human action during the review, delivered to the authoring agent via `docent_await_event`. */
@@ -185,10 +290,12 @@ data class ReviewEvent(
 data class QueuedChange(val summary: String, val file: String, val line: Int, val sectionIndex: Int)
 
 /**
- * Pushes a [ReviewEvent] into the driving agent's session so it doesn't have to long-poll [awaitEvent].
- * Implemented by the optional AWB module (`awb/DocentEventNotifier`), which sends the event as a prompt to
- * the agent's existing workbench thread. Kept as a plain interface here so the core stays platform-clean
- * (no workbench dependency leaks in). Returns true if the event was accepted for delivery.
+ * Pushes a [ReviewEvent] straight into an agent's existing workbench thread. Used for the one case that can't
+ * go through the [EventLog]/await channels: waking an *idle* agent the human picked in "Connect agent…" to
+ * start a review (a `REVIEW_RESUMED` event — there's no other way to reach a session that isn't in a turn).
+ * Ongoing actions then flow through the agent's file watch, not here. Implemented by the optional AWB module
+ * (`awb/DocentEventNotifier`); kept as a plain interface so the core stays platform-clean. Returns true if the
+ * event was accepted for delivery.
  */
 interface EventNotifier {
     fun notifyAgent(event: ReviewEvent): Boolean

@@ -47,6 +47,9 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     /** Routes the reviewer's reply / new comment to the live Docent; null → comments stay local. */
     var poster: CommentPoster? = null
 
+    /** When false (no agent connected), the card is read-only: no reply input, no compose/comment buttons. */
+    var interactive: Boolean = true
+
     private fun isDocent() = thread.author.equals("docent", ignoreCase = true)
     private fun isUser() = thread.author.equals("you", ignoreCase = true)
 
@@ -90,6 +93,9 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         content.add(headerRow(expanded = true))
         content.add(bodyArea(thread.body))
         thread.replies.forEach { content.add(replyView(it)) }
+
+        // Read-only when no agent is connected: show the thread, but no reply affordance.
+        if (!interactive) return content
 
         val input = inputArea("Write a reply…  (Ctrl+Enter to send)")
         val send = {

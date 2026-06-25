@@ -15,7 +15,6 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.trail.Section
-import com.kevingosse.docent.trail.Trail
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
@@ -37,13 +36,13 @@ import javax.swing.SwingUtilities
  * Docent is the coding agent that authored the change, answering from first-hand knowledge ("the Docent
  * presents; the human asks", §4).
  *
- * Holds a [DocentConversationBackend] chosen on the first human message: the live workbench agent via the MCP
- * loop when a review is active, otherwise a self-spawned agent (so skimmed sections spawn nothing). The backend
- * is a child Disposable. All callbacks arrive off-EDT and are re-dispatched here via [onEdt].
+ * Holds a [McpLoopBackend], created lazily on the first human message, that routes the remark to the connected
+ * agent. The conversation is only usable when an agent is connected ([DocentReviewService.reviewActive]); when
+ * none is, the input is disabled with a hint to connect one (there is no self-spawned fallback). The backend is
+ * a child Disposable. All callbacks arrive off-EDT and are re-dispatched here via [onEdt].
  */
 class SectionConversationPanel(
     private val project: Project,
-    private val trail: Trail,
     private val section: Section,
     private val sectionIndex: Int,
 ) : JPanel(BorderLayout()), Disposable {
@@ -105,10 +104,25 @@ class SectionConversationPanel(
 
         // The section narration is the Docent's opening message; the discussion flows on from it.
         addDocentHtml(section.narration)
+        applyConnectionState()
+    }
+
+    /** Enable the input only when an agent is connected; otherwise hint the reviewer to connect one. The panel
+     *  is rebuilt by [DocentPanel] when the connection flips, so reading the state at construction is enough. */
+    private fun applyConnectionState() {
+        val connected = DocentReviewService.getInstance(project).reviewActive
+        input.isEnabled = connected
+        sendButton.isEnabled = connected && !busy
+        input.emptyText.text = if (connected) {
+            "Ask the Docent about this section — Enter to send, Shift+Enter for a new line"
+        } else {
+            "Connect an agent (Docent panel → “Connect agent…”) to discuss this section"
+        }
     }
 
     private fun send() {
         if (disposed || busy) return
+        if (!DocentReviewService.getInstance(project).reviewActive) return
         val text = input.text.trim()
         if (text.isEmpty()) return
         input.text = ""
@@ -119,13 +133,11 @@ class SectionConversationPanel(
         backend().send(text, turn)
     }
 
-    /** Pick the backend once: the live workbench agent (MCP loop) when a review is active, else self-spawn. */
+    /** The live agent backend (MCP loop), created once on first use. Only reached when an agent is connected
+     *  (the input is disabled otherwise), so there's no fallback branch. */
     private fun backend(): DocentConversationBackend {
         backend?.let { return it }
-        val service = DocentReviewService.getInstance(project)
-        val b: DocentConversationBackend =
-            if (service.reviewActive) McpLoopBackend(project, sectionIndex, section.headline)
-            else SelfSpawnBackend(project, trail, section)
+        val b = McpLoopBackend(project, sectionIndex, section.headline)
         backend = b
         Disposer.register(this, b)
         return b

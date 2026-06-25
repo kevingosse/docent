@@ -34,6 +34,16 @@ class DocentReviewController(private val project: Project) {
         fun onModelChanged() {}
         /** The selected section/file changed; refresh the view + highlights. */
         fun onSelectionChanged() {}
+        /** The agent-connection state flipped; re-evaluate interactive affordances (conversation, "+"). */
+        fun onConnectionChanged() {}
+    }
+
+    init {
+        // Bridge the service's connection-changed signal to our listeners, on the EDT. Lets open views enable
+        // or disable their interactive affordances the moment an agent is connected/disconnected.
+        DocentReviewService.getInstance(project).onConnectionChanged = {
+            ApplicationManager.getApplication().invokeLater({ listeners.forEach { it.onConnectionChanged() } }, ModalityState.any())
+        }
     }
 
     var trail: Trail? = null

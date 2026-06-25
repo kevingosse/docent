@@ -82,6 +82,17 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
 
     override fun onSelectionChanged() = render()
 
+    /**
+     * The agent connection flipped. Rebuild the current section so its conversation input and inline-comment "+"
+     * re-evaluate the connected state (the section diff re-renders, re-installing or hiding the "+"). Threads are
+     * preserved (not cleared), so seeded comments and any reviewer cards survive.
+     */
+    override fun onConnectionChanged() {
+        disposeSection()
+        renderedSectionIndex = Int.MIN_VALUE
+        render()
+    }
+
     private fun render() {
         val j = controller.trail
         if (j == null) {
@@ -140,7 +151,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
 
         // The section summary IS the conversation: it opens with the narration (the Docent's first message) and
         // the human continues from there. No separate narration pane.
-        val conv = SectionConversationPanel(project, j, section, index)
+        val conv = SectionConversationPanel(project, section, index)
         conversation = conv
         Disposer.register(this, conv)
         summaryComponent = conv
@@ -278,6 +289,9 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             request.putUserData(DocentDiffMarker.THREADS, threadsFor(anchor))
             // Route reviewer remarks on this file's comments to the live Docent (no-op without an agent).
             request.putUserData(DocentDiffMarker.POSTER, commentPoster(anchor))
+            // Interactive comment affordances (the gutter "+", card reply/compose inputs) are enabled only when an
+            // agent is connected; otherwise seeded comments show read-only and no new ones can be added.
+            request.putUserData(DocentDiffMarker.INTERACTIVE, DocentReviewService.getInstance(project).reviewActive)
 
             // When the anchor declares focus spans, drive the dimming overlay + section-scoped toolbar.
             // DocentDimmingDiffExtension reads RANGES/CONTROLLER; SectionDiffProcessor reads CONTROLLER off the
