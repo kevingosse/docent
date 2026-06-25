@@ -96,9 +96,18 @@ intellijPlatform {
     // surface on the classpath, so the compiler can't catch an accidental Rider-only call. The Plugin
     // Verifier does: it checks the built plugin against other products and flags any non-portable API.
     pluginVerification {
-        // We knowingly call internal/experimental Agent Workbench EPs (gated + optional), and AWB is
-        // not present in the IDEs we verify against — so don't fail on internal/experimental-API or
-        // missing-optional-dependency notes; fail only on the real portability breakers.
+        // Agent Workbench is an OPTIONAL dependency: the awb/ seam is gated behind <depends optional>
+        // and only loads in an IDE that has the matching AWB build. The IDEs we verify against either
+        // lack AWB or bundle a DIFFERENT build, so its references look unresolved here even though they
+        // resolve at runtime where AWB is present. externalPrefixes treats the package as provided (so
+        // it isn't verified or cascaded); the ignore file additionally suppresses member-level
+        // mismatches against a bundled-but-older AWB. The core (everything else) is still verified.
+        // NB: the other optional dep, com.intellij.mcpServer, is bundled in IDEA/PyCharm so it
+        // resolves fine and needs no exclusion.
+        externalPrefixes = listOf("com.intellij.agent.workbench")
+        ignoredProblemsFile = layout.projectDirectory.file("verifier-ignored-problems.txt")
+        // We also knowingly call internal/experimental platform + AWB EPs, so fail only on the real
+        // portability breakers, not on internal/experimental/deprecated-API notes.
         failureLevel = listOf(
             VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
             VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
@@ -106,8 +115,10 @@ intellijPlatform {
         ides {
             // Released, non-Rider products at the latest public build (261 ≥ our since-build 252).
             // If the core ever reaches for a Rider-only or too-new platform API, this turns red.
-            create(IntelliJPlatformType.IntellijIdeaCommunity, "2026.1.3")
-            create(IntelliJPlatformType.PyCharmCommunity, "2026.1.3")
+            // Since 2025.3 (253) the Community/Ultimate downloads are unified, so the old
+            // IntellijIdeaCommunity / PyCharmCommunity coordinates are gone — use the merged types.
+            create(IntelliJPlatformType.IntellijIdea, "2026.1.3")
+            create(IntelliJPlatformType.PyCharm, "2026.1.3")
         }
     }
 }
