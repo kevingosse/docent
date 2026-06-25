@@ -1,3 +1,6 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.4.0"
@@ -84,6 +87,27 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             // untilBuild intentionally left open for the prototype phase.
+        }
+    }
+
+    // Cross-IDE guarantee: the plugin is platform-clean (depends only on com.intellij.modules.platform,
+    // with the MCP / Agent Workbench seams gated behind optional dependencies), so the core review
+    // surface must load on any IntelliJ-based IDE. We compile against Rider, which has the whole API
+    // surface on the classpath, so the compiler can't catch an accidental Rider-only call. The Plugin
+    // Verifier does: it checks the built plugin against other products and flags any non-portable API.
+    pluginVerification {
+        // We knowingly call internal/experimental Agent Workbench EPs (gated + optional), and AWB is
+        // not present in the IDEs we verify against — so don't fail on internal/experimental-API or
+        // missing-optional-dependency notes; fail only on the real portability breakers.
+        failureLevel = listOf(
+            VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
+            VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
+        )
+        ides {
+            // Released, non-Rider products at the latest public build (261 ≥ our since-build 252).
+            // If the core ever reaches for a Rider-only or too-new platform API, this turns red.
+            create(IntelliJPlatformType.IntellijIdeaCommunity, "2026.1.3")
+            create(IntelliJPlatformType.PyCharmCommunity, "2026.1.3")
         }
     }
 }

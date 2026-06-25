@@ -35,3 +35,9 @@ jobs:
           name: code-review-docent
           path: build/distributions/*.zip
           if-no-files-found: error
+
+      # Cross-IDE check: verify the built plugin against released non-Rider IDEs (see the
+      # pluginVerification block in build.gradle.kts). Runs after the upload so the artifact is
+      # available even if verification reports a portability problem. Reuses the Rider already
+      # downloaded above.
+      - run: ./gradlew verifyPlugin
