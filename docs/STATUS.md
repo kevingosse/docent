@@ -73,6 +73,15 @@ The optional critic and the surrounding polish:
   Close the loop so the response edits are reviewable in the same surface (e.g. a follow-up mini-Trail for
   the delta, or a resolved/changed state on the original "requested change" card with its edit attached).
 
+- **On-demand review mode (don't auto-open after every change).** Today the protocol tells the agent to
+  finalize a Trail and open the review the moment any change is complete, however trivial — which gets in
+  the way while the user is still iterating on a design across several rounds. Add an opt-in mode where the
+  agent **keeps recording decisions** (`docent_record_decision`) as it works but does **not** call
+  `docent_finalize_trail` until the user explicitly asks — either by telling the agent in chat, or via an
+  IDE **"Start review"** action that sends a start-review message to the chosen agent session (reuse the
+  `AgentPromptLaunchers` push path that "Connect agent…" already uses). The accumulated decision log spans
+  the whole iteration, so the eventual Trail covers the final design, not each intermediate step.
+
 ### Smaller backlog
 
 - **Multi-agent provider support — Claude + Codex wired (0.2.3); other providers still open.** The
