@@ -89,6 +89,13 @@ class DocentReviewService(private val project: Project) {
     @Volatile
     var agentProjectPath: String? = null
 
+    /** The connected agent's provider value (`AgentSessionProvider.value`, e.g. "claude" / "codex"), so the
+     *  [EventNotifier] pushes to the right provider and the UI can label it. Set by the launch contributor (per
+     *  launch) and authoritatively by the UI "Connect agent…" path (which knows the picked session's provider).
+     *  Null until a session is launched/linked. Drives [deliveryMode] via [deliveryModeForProvider]. */
+    @Volatile
+    var agentProvider: String? = null
+
     /** Pushes the UI-initiated *resume* into the picked agent's workbench thread (the one case that still needs
      *  a push — see the class doc). Installed by the optional AWB module; null when the workbench isn't present. */
     @Volatile
@@ -212,7 +219,8 @@ class DocentReviewService(private val project: Project) {
         onConnectionChanged?.invoke()
     }
 
-    /** Tear down any in-flight loop state (new review, or "Reload trail"). */
+    /** Tear down any in-flight loop state (new review, or "Reload trail"). Leaves [agentProvider]/[deliveryMode]
+     *  alone — they're set per launch by the contributor and shouldn't be cleared out from under a fresh arm. */
     fun reset() {
         reviewActive = false
         loopEngaged = false
@@ -244,6 +252,16 @@ enum class DeliveryMode {
     AWAIT,
 }
 
+/**
+ * The [DeliveryMode] a provider's CLI supports, keyed by `AgentSessionProvider.value`. Codex has no
+ * background-watch tool (it can't tail the [EventLog] file out-of-band), so it must **block** on
+ * `docent_await_event` ([DeliveryMode.AWAIT]); Claude — and the default for anything else — watches the
+ * EventLog file with its Monitor tool ([DeliveryMode.MONITOR]). Kept in core (a plain String switch) so the
+ * platform-clean UI can map a picked session's provider without importing any workbench type.
+ */
+fun deliveryModeForProvider(provider: String?): DeliveryMode =
+    if (provider.equals("codex", ignoreCase = true)) DeliveryMode.AWAIT else DeliveryMode.MONITOR
+
 /** A live agent session the UI can link a loaded trail to (see [AgentSessionDirectory]). */
 data class AgentSessionInfo(
     /** The workbench thread id (== Claude `--session-id`); the push target for review events. */
@@ -269,9 +287,12 @@ interface AgentSessionDirectory {
  * exists, which has no id to target). The launched agent is told to call `docent_resume_review`, which arms the
  * loop and pins the push target via its sessionToken — so the UI need not know the new session's id. Implemented
  * by the optional AWB module (`awb/WorkbenchAgentLauncher`). Returns true if the launch was accepted.
+ *
+ * [provider] is the `AgentSessionProvider.value` to launch (e.g. "claude" / "codex"); the launcher maps it back
+ * to a workbench provider. The launch contributor then injects the right Docent protocol + delivery mode for it.
  */
 interface AgentSessionLauncher {
-    fun startSession(initialPrompt: String): Boolean
+    fun startSession(initialPrompt: String, provider: String): Boolean
 }
 
 /** One human action during the review, delivered to the authoring agent via `docent_await_event`. */

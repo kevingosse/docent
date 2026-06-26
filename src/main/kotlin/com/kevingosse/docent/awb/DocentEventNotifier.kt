@@ -7,6 +7,7 @@ import com.intellij.agent.workbench.prompt.core.AgentPromptLaunchers
 import com.intellij.platform.ai.agent.core.session.AgentSessionLaunchMode
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.EventLog
 import com.kevingosse.docent.EventNotifier
@@ -49,7 +50,7 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
             val prompt = buildPrompt(event)
             val result = bridge.launch(
                 AgentPromptLaunchRequest(
-                    provider = AgentSessionProvider.CLAUDE,
+                    provider = providerOf(service.agentProvider),
                     projectPath = projectPath,
                     launchMode = AgentSessionLaunchMode.STANDARD,
                     initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt, projectPath = projectPath),
@@ -85,8 +86,12 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                     "Read the trail file now to refresh the WHY (the narration and inline comments) — your earlier " +
                         "context may be gone.",
                 )
-                val logPath = DocentReviewService.getInstance(project).eventLogPath
-                if (logPath != null) {
+                // Monitor (Claude) → hand it the watch command; AWAIT (Codex) → tell it to block on the tool.
+                // Gate on the delivery MODE, not merely on a log existing: the log file is begun for AWAIT too,
+                // it's just unused there, so keying off its presence would wrongly send Codex to the Monitor tool.
+                val service = DocentReviewService.getInstance(project)
+                val logPath = service.eventLogPath
+                if (service.deliveryMode == DeliveryMode.MONITOR && logPath != null) {
                     appendLine()
                     appendLine("Then watch this review's events with the Monitor tool (persistent: true), running EXACTLY this command:")
                     appendLine("  " + EventLog.watchCommand(logPath))
@@ -136,5 +141,11 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
 
     private companion object {
         private val LOG = logger<DocentEventNotifier>()
+
+        /** Map a stored provider value (`AgentSessionProvider.value`) back to the provider for the launch request;
+         *  default to Claude when unknown/null (the historical single-provider case). `AgentSessionProvider` is a
+         *  value class (no `entries`/`values()`), so match against the constants we support. */
+        fun providerOf(value: String?): AgentSessionProvider =
+            if (value == AgentSessionProvider.CODEX.value) AgentSessionProvider.CODEX else AgentSessionProvider.CLAUDE
     }
 }

@@ -19,6 +19,7 @@ import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.AgentSessionInfo
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.ReviewEvent
+import com.kevingosse.docent.deliveryModeForProvider
 import com.kevingosse.docent.trail.Anchor
 import com.kevingosse.docent.trail.Section
 import java.awt.BorderLayout
@@ -219,7 +220,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // "Start a new agent session" first (the reliable path for a not-yet-started session — which has no id to
         // target), then the existing started sessions.
         val choices = buildList {
-            if (canLaunch) add(ConnectChoice.StartNew)
+            if (canLaunch) NEW_SESSION_PROVIDERS.forEach { (value, label) -> add(ConnectChoice.StartNew(value, label)) }
             sessions.forEach { add(ConnectChoice.Existing(it)) }
         }
         val popup = JBPopupFactory.getInstance()
@@ -236,25 +237,25 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun choiceLabel(c: ConnectChoice): String = when (c) {
-        ConnectChoice.StartNew -> "✦  Start a new agent session"
+        is ConnectChoice.StartNew -> "✦  Start a new ${c.label} session"
         is ConnectChoice.Existing -> sessionLabel(c.info)
     }
 
     private fun choiceFilter(c: ConnectChoice): String = when (c) {
-        ConnectChoice.StartNew -> "start new agent session"
+        is ConnectChoice.StartNew -> "start new ${c.label} agent session"
         is ConnectChoice.Existing -> c.info.title
     }
 
     private fun onChoice(c: ConnectChoice) {
         when (c) {
-            ConnectChoice.StartNew -> startNewSession()
+            is ConnectChoice.StartNew -> startNewSession(c.provider, c.label)
             is ConnectChoice.Existing -> linkTo(c.info)
         }
     }
 
     /** Launch a fresh agent session and tell it to resume on the loaded trail (it arms the review itself via
      *  docent_resume_review). The reliable path when there's no existing session to connect to. */
-    private fun startNewSession() {
+    private fun startNewSession(provider: String, label: String) {
         val service = DocentReviewService.getInstance(project)
         val path = service.trailPath
         val launcher = service.sessionLauncher
@@ -265,17 +266,18 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val prompt = "Please resume the Code Review Docent review for the trail at `$path`. " +
             "Call docent_resume_review(path=\"$path\") now to load it into the review UI and connect yourself as " +
             "the Docent, then read the trail file to refresh the WHY before answering the reviewer."
-        if (!launcher.startSession(prompt)) {
+        if (!launcher.startSession(prompt, provider)) {
             Messages.showInfoMessage(
                 project,
-                "Couldn't start a new agent session. Start one from the Agent Workbench, then use Connect agent again.",
+                "Couldn't start a new $label session. Start one from the Agent Workbench, then use Connect agent again.",
                 "Connect Agent",
             )
             return
         }
         // The launched agent calls docent_resume_review, which arms the review (reviewActive) and pins itself as
-        // the push target via its sessionToken. The status flips when that lands (onConnectionChanged).
-        connectionLabel.text = "  ⟳ Starting a new agent session…"
+        // the push target via its sessionToken. The launch contributor sets agentProvider + deliveryMode for this
+        // provider as it launches. The status flips when the resume lands (onConnectionChanged).
+        connectionLabel.text = "  ⟳ Starting a new $label session…"
         connectionLabel.foreground = JBColor.GRAY
     }
 
@@ -283,6 +285,10 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun linkTo(picked: AgentSessionInfo) {
         val service = DocentReviewService.getInstance(project)
         linkedTitle = picked.title
+        // Authoritative provider/delivery for the picked session (the launch contributor's per-launch guess can be
+        // stale if other sessions launched since): Claude → Monitor (watch the EventLog), Codex → await (block).
+        service.agentProvider = picked.provider
+        service.deliveryMode = deliveryModeForProvider(picked.provider)
         service.linkAgentSession(picked.threadId)
         // Hand the agent its role + the trail to read. Best-effort: a missing/failed notifier just means the
         // agent must catch up via docent_await_event; the review is armed either way.
@@ -354,13 +360,17 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         DocentReviewService.getInstance(project).onChangesUpdated = null
     }
 
-    /** An entry in the "Connect agent" picker: start a fresh session, or connect an existing one. */
+    /** An entry in the "Connect agent" picker: start a fresh session of [provider], or connect an existing one. */
     private sealed interface ConnectChoice {
-        object StartNew : ConnectChoice
+        data class StartNew(val provider: String, val label: String) : ConnectChoice
         data class Existing(val info: AgentSessionInfo) : ConnectChoice
     }
 
     private companion object {
         private val CONNECTED = JBColor(Color(0x4C9A4E), Color(0x62B266))
+
+        /** Providers the UI offers a "start a new session" entry for (value → display label). Matches the
+         *  providers the Docent can drive (Claude, Codex); see WorkbenchSessionDirectory.SUPPORTED_PROVIDERS. */
+        private val NEW_SESSION_PROVIDERS = listOf("claude" to "Claude", "codex" to "Codex")
     }
 }

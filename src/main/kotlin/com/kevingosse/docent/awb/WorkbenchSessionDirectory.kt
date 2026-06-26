@@ -12,8 +12,8 @@ import com.kevingosse.docent.AgentSessionInfo
 
 /**
  * Lists the live workbench agent sessions the UI can connect a loaded Trail to (the "Connect agent…" picker in
- * `ui/DocentNavPanel`). Returns the **Claude** sessions for this project (the push transport,
- * [DocentEventNotifier], targets Claude), each carrying the thread id the broker pins via
+ * `ui/DocentNavPanel`). Returns the sessions for the providers the Docent can drive ([SUPPORTED_PROVIDERS] —
+ * Claude and Codex) in this project, each carrying its provider value and the thread id the broker pins via
  * [com.kevingosse.docent.DocentReviewService.linkAgentSession].
  *
  * Two sources are merged so the list matches what the user sees in the workbench:
@@ -45,7 +45,7 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
         runCatching {
             service<AgentSessionsStateStore>().snapshot().projects
                 .firstOrNull { samePath(it.path, base) }?.threads.orEmpty()
-                .filter { !it.archived && it.provider == AgentSessionProvider.CLAUDE }
+                .filter { !it.archived && it.provider in SUPPORTED_PROVIDERS }
                 .sortedByDescending { it.updatedAt }
                 .forEach { t -> if (seen.add(t.id)) result += AgentSessionInfo(t.id, t.title, t.provider.value, t.updatedAt) }
         }.onFailure { LOG.warn("Docent: couldn't read the workbench session store", it) }
@@ -59,7 +59,7 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
      * separate project window); we keep only tabs whose own `projectPath` matches ours.
      */
     private fun openTabSessions(base: String, seen: MutableSet<String>): List<AgentSessionInfo> {
-        val claude = AgentSessionProvider.CLAUDE.value
+        val supported = SUPPORTED_PROVIDERS.map { it.value }.toSet()
         val out = mutableListOf<AgentSessionInfo>()
         val files = ProjectManager.getInstance().openProjects.flatMap { p ->
             runCatching { FileEditorManager.getInstance(p).openFiles.asList() }.getOrDefault(emptyList())
@@ -71,7 +71,7 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
                 // underlying String (e.g. "claude"); the hash is build-specific, so find it by prefix.
                 val providerGetter = vf.javaClass.methods.firstOrNull { it.name.startsWith("getProvider") && it.parameterCount == 0 }
                 val provider = providerGetter?.invoke(vf) as? String ?: return@runCatching
-                if (provider != claude) return@runCatching
+                if (provider !in supported) return@runCatching
                 if (!samePath(invokeString(vf, "getProjectPath"), base)) return@runCatching
                 val id = invokeString(vf, "getThreadId")?.takeIf { it.isNotBlank() }
                     ?: invokeString(vf, "getSessionId")?.takeIf { it.isNotBlank() }
@@ -98,5 +98,9 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
     private companion object {
         private val LOG = logger<WorkbenchSessionDirectory>()
         private const val AGENT_CHAT_VFILE_FQN = "com.intellij.agent.workbench.chat.AgentChatVirtualFile"
+
+        /** Providers the Docent can drive today: Claude (Monitor delivery) and Codex (await delivery). Junie /
+         *  OpenCode / others aren't wired (no confirmed MCP path + delivery mode) so they're left off the picker. */
+        private val SUPPORTED_PROVIDERS = setOf(AgentSessionProvider.CLAUDE, AgentSessionProvider.CODEX)
     }
 }

@@ -7,6 +7,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
 import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
+import com.kevingosse.docent.deliveryModeForProvider
 
 /**
  * Injects the [DocentProtocolPrompt] into a workbench-launched agent's system/base instructions, so the
@@ -42,19 +43,25 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
                     // by blocking on docent_await_event — so no MCP_TOOL_TIMEOUT env hack is needed: the inbound
                     // path no longer rides an MCP tool call at all.
                     val threadId = resolveThreadId(sessionId, launchSpec)
-                    registerPushTarget(projectPath)
+                    registerPushTarget(projectPath, provider)
                     LOG.info("Docent: Claude launch — injecting Docent protocol (Monitor delivery, thread=$threadId)")
                     launchSpec.copy(command = injectClaudeSystemPrompt(launchSpec.command, threadId))
                 }
 
-                // CODEX is deferred: it gets no --mcp-config from the workbench, so it can't reach the
-                // docent_* tools today, and injecting "use these tools" instructions for tools it can't
-                // see would only mislead it. Wiring Codex needs two confirmations first (the mcp_servers
-                // TOML key path/transport, and whether `-c mcp_servers.*` is honored on the interactive
-                // TUI). Until then, leave the launch untouched.
+                // Codex CAN reach the docent_* tools: the workbench doesn't pass it --mcp-config, but the user's
+                // Codex config registers the IDE's streamable-HTTP MCP server (see CODEX_MCP_SERVER_NAME), so the
+                // tools are visible. Two differences from Claude, both handled in injectCodexConfig:
+                //  1) No --append-system-prompt. The ambient-instruction analog is `-c developer_instructions=…`
+                //     (verified: lands as a developer message, non-destructive). So we inject the protocol there.
+                //  2) No background-watch tool → Codex BLOCKS on docent_await_event (DeliveryMode.AWAIT). Codex's
+                //     default MCP tool-call timeout is 60s, which would kill a quiet await; we lift it per-server
+                //     via `-c mcp_servers.<name>.tool_timeout_sec`. (Server-side await never times out; the agent
+                //     re-calls on the rare client timeout — see the docent_await_event description.)
                 AgentSessionProvider.CODEX -> {
-                    LOG.info("Docent: Codex injection deferred (MCP wiring unconfirmed) for ${provider.value}")
-                    launchSpec
+                    val threadId = resolveThreadId(sessionId, launchSpec)
+                    registerPushTarget(projectPath, provider)
+                    LOG.info("Docent: Codex launch — injecting Docent protocol (await delivery, thread=$threadId)")
+                    launchSpec.copy(command = injectCodexConfig(launchSpec.command, threadId))
                 }
 
                 else -> launchSpec
@@ -78,12 +85,13 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
      * the prompt. With no separator, append at the end.
      */
     private fun injectClaudeSystemPrompt(command: List<String>, threadId: String?): List<String> {
-        val protocol = if (threadId != null) DocentProtocolPrompt.withSessionToken(threadId) else DocentProtocolPrompt.TEXT
+        val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.MONITOR, threadId))
         val flag = "--append-system-prompt"
         val i = command.indexOf(flag)
         if (i >= 0 && i + 1 < command.size) {
             val merged = command.toMutableList()
-            merged[i + 1] = command[i + 1] + "\n\n" + protocol
+            // Join with a space, NOT a newline: the terminal truncates the arg at its first newline (see singleLine).
+            merged[i + 1] = command[i + 1] + "  " + protocol
             return merged
         }
 
@@ -93,8 +101,41 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
         return result
     }
 
-    /** This session's workbench thread id (== Claude `--session-id`): the sessionId param, else the spec's
-     *  preallocated id, else the `--session-id` already on the command line. Null if none is available. */
+    /**
+     * Inject the Codex equivalents of Claude's launch knobs (see the CODEX branch in [contribute]). Two `-c`
+     * config overrides, inserted before the `--` prompt separator (tokens after `--` are the initial message):
+     *  - `developer_instructions=<await protocol>` — the ambient-instruction analog of `--append-system-prompt`.
+     *    The value is a raw multi-line string; Codex parses a `-c` value as TOML and falls back to the literal
+     *    when that fails, so the protocol text passes through verbatim (no quoting needed). We always set our
+     *    own (the workbench injects none), so there's nothing to merge.
+     *  - `mcp_servers.<CODEX_MCP_SERVER_NAME>.tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` — lifts the 60s default
+     *    that would otherwise kill a blocking docent_await_event.
+     */
+    private fun injectCodexConfig(command: List<String>, threadId: String?): List<String> {
+        val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.AWAIT, threadId))
+        val extra = listOf(
+            "-c", "mcp_servers.$CODEX_MCP_SERVER_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
+            "-c", "developer_instructions=$protocol",
+        )
+        val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
+        return command.toMutableList().apply { addAll(insertAt, extra) }
+    }
+
+    /**
+     * Collapse a protocol string to a single physical line for command-line injection.
+     *
+     * The workbench launches agents through the reworked terminal in NON_SHELL mode
+     * (`AgentChatTerminalTabSupport`), which **truncates a command-line argument at its first newline** on
+     * Windows — VERIFIED against a real Codex session rollout: a multi-line `developer_instructions` value
+     * arrived cut at line 1, dropping the entire protocol after the first sentence (the same hazard applies to
+     * Claude's `--append-system-prompt`). So any instruction baked onto the command line MUST be one line.
+     * The protocol is plain prose/bullets, so joining its lines with spaces reads fine as a single paragraph.
+     */
+    private fun singleLine(s: String): String =
+        s.lines().joinToString(" ") { it.trim() }.replace(Regex(" {2,}"), " ").trim()
+
+    /** This session's workbench thread id: the sessionId param, else the spec's preallocated id, else the id
+     *  already on the command line (Claude's `--session-id <id>`, or Codex's `resume <id>`). Null if none. */
     private fun resolveThreadId(sessionId: String?, launchSpec: AgentSessionTerminalLaunchSpec): String? =
         sessionId?.takeIf { it.isNotBlank() }
             ?: launchSpec.preallocatedSessionId?.takeIf { it.isNotBlank() }
@@ -107,13 +148,18 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
      * here (the same for every session in the project, so it's safe for background launches to re-set it).
      * Best-effort: failure just means the review falls back to the (working but token-heavy) poll path.
      */
-    private fun registerPushTarget(projectPath: String) {
+    private fun registerPushTarget(projectPath: String, provider: AgentSessionProvider) {
         val project = resolveProject(projectPath) ?: run {
             LOG.info("Docent: couldn't resolve an open project for $projectPath; the review will use the poll path")
             return
         }
         val service = DocentReviewService.getInstance(project)
-        service.deliveryMode = DeliveryMode.MONITOR // Claude watches the EventLog file; it does not block on await
+        // Provider-scoped (not session-scoped) state. In practice one agent kind drives a review at a time, so the
+        // last launch's provider is the right one when its session then arms the review; the precise per-session
+        // target is the sessionToken the agent echoes (see contribute). The UI "Connect agent…" path overrides
+        // these authoritatively from the picked session.
+        service.agentProvider = provider.value
+        service.deliveryMode = deliveryModeForProvider(provider.value) // Claude → MONITOR (watch), Codex → AWAIT (block)
         service.agentProjectPath = projectPath
         service.eventNotifier = DocentEventNotifier(project)
         // Also (re)install the session directory + launcher here, not only in DocentWorkbenchSetup's project-open
@@ -123,10 +169,13 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
         service.sessionLauncher = WorkbenchAgentLauncher(project)
     }
 
-    /** Last-resort thread id: the `--session-id <id>` already on the Claude command line. */
+    /** Last-resort thread id from the command line: Claude's `--session-id <id>`, or Codex's `resume <id>`. */
     private fun sessionIdFromCommand(command: List<String>): String? {
-        val i = command.indexOf("--session-id")
-        return if (i >= 0 && i + 1 < command.size) command[i + 1].takeIf { it.isNotBlank() } else null
+        val claude = command.indexOf("--session-id")
+        if (claude >= 0 && claude + 1 < command.size) command[claude + 1].takeIf { it.isNotBlank() }?.let { return it }
+        val resume = command.indexOf("resume")
+        if (resume >= 0 && resume + 1 < command.size) command[resume + 1].takeIf { it.isNotBlank() }?.let { return it }
+        return null
     }
 
     /** Match the launch's projectPath to an open project by base path (path separators / case normalized). */
@@ -140,5 +189,18 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
 
     companion object {
         private val LOG = logger<DocentLaunchContributor>()
+
+        /**
+         * The MCP server name, in the user's Codex config, that points at THIS IDE's MCP server (the one that
+         * publishes the docent_* tools) — we patch its `tool_timeout_sec` on the Codex command line. Unlike
+         * Claude (whose merged config the workbench generates), the workbench leaves Codex's MCP config to the
+         * user, so this must match their `~/.codex/config.toml` entry (`[mcp_servers.<name>] url = …/stream`).
+         * On this box that entry is named `rider`. TODO: surface as a setting once we support non-Rider IDEs.
+         */
+        private const val CODEX_MCP_SERVER_NAME = "rider"
+
+        /** Per-server MCP tool-call timeout (seconds) for Codex, lifting the 60s default so a blocking
+         *  docent_await_event survives a quiet review. 1h is generous; the agent re-calls on the rare timeout. */
+        private const val CODEX_TOOL_TIMEOUT_SEC = 3600
     }
 }

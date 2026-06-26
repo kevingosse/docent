@@ -81,7 +81,8 @@ class DocentMcpToolset : McpToolset {
         |    for a change, also call docent_queue_change, then call this tool again.
         |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes.
         |It blocks until something is pending (no server-side timeout); keep calling it after each event until
-        |review_completed.
+        |review_completed. If a call returns a timeout/error before any event (a quiet review outlasted your MCP
+        |client's tool timeout), that's expected — just call it again; the review is not over.
         """
     )
     suspend fun docent_await_event(): String {
@@ -360,6 +361,17 @@ class DocentMcpToolset : McpToolset {
         |working-tree line here, so quoted snippets beat hand-counted line numbers. Validation flags anchors that
         |aren't on changed files, comment snippets it couldn't locate, and warns if nothing was recorded during
         |the task (a sign the story may be from memory, not the log).
+        |trailJson SCHEMA (use these exact field names):
+        |  {"subject": str, "thesis": str (HTML ok),
+        |   "sections": [ {"headline": str, "narration": str (HTML ok),
+        |       "anchors": [ {"path": str (repo-relative changed file),
+        |                     "ranges": [{"start": int, "end": int}]?,   // 1-based, end-inclusive; omit to focus whole file
+        |                     "label": str?,
+        |                     "comments": [ {"anchorText": str (verbatim snippet of the target line),
+        |                                    "body": str, "line": int?} ]? } ] } ] }
+        |The code a comment points at goes in a section ANCHOR's `comments[]` (keyed by `path`), NOT a section-level
+        |`comments`/`files`/`why`/`title`. If you skipped docent_change_summary, call it first for the changed-file
+        |list and exact line ranges.
         |Granularity reminder: sections = functional blocks understandable without the code; code-specific points
         |= inline comments. Never split one method across sections.
         """
@@ -385,9 +397,7 @@ class DocentMcpToolset : McpToolset {
         } catch (t: Throwable) {
             return "Couldn't parse the Trail JSON (${t.message}). It must be a JSON object with subject, thesis, and sections[]."
         }
-        if (parsed == null || parsed.subject == null || parsed.thesis == null || parsed.sections == null || parsed.sections.isEmpty()) {
-            return "The Trail must have a subject, a thesis, and a non-empty sections[]."
-        }
+        validateTrail(parsed)?.let { return it }
         // Force the working-tree base; a captured Trail is diffed against baseRef, not a commit.
         val warnings = mutableListOf<String>()
         // Resolve each comment's anchorText to a real working-tree line (line-number accuracy, DESIGN §7) before
@@ -423,6 +433,36 @@ class DocentMcpToolset : McpToolset {
         return "$report\n\n" + armReview(project, file.toString(), trail, sessionToken)
     }
 
+    /**
+     * Validate a Gson-parsed [Trail] and return a precise, agent-actionable error message naming the **correct
+     * field names** (or null when it's well-formed). This is what turns a wrong-schema submission into a self-
+     * correction instead of a crash: Gson bypasses Kotlin constructors, so non-null fields and `= emptyList()`
+     * defaults can both be null when the JSON omits or misnames them (e.g. the agent sends section-level
+     * `title`/`why`/`files` instead of `headline`/`narration`/`anchors[]`). We must null-check everything here.
+     */
+    @Suppress("SENSELESS_COMPARISON")
+    private fun validateTrail(trail: Trail?): String? {
+        val schema = "Expected: {subject, thesis, sections:[{headline, narration, " +
+            "anchors:[{path, ranges?, label?, comments?:[{anchorText, body, line?}]}]}]}."
+        if (trail == null) return "The Trail JSON didn't parse to an object. $schema"
+        if (trail.subject.isNullOrBlank()) return "The Trail needs a non-empty top-level \"subject\". $schema"
+        if (trail.thesis.isNullOrBlank()) return "The Trail needs a non-empty top-level \"thesis\". $schema"
+        if (trail.sections == null || trail.sections.isEmpty()) return "The Trail needs a non-empty \"sections\"[]. $schema"
+        trail.sections.forEachIndexed { i, s ->
+            val where = "sections[$i]"
+            if (s.headline.isNullOrBlank()) return "$where is missing \"headline\" (the section's stand-alone title). $schema"
+            if (s.narration.isNullOrBlank()) return "$where is missing \"narration\" (the section's prose). $schema"
+            if (s.anchors == null || s.anchors.isEmpty()) {
+                return "$where has no \"anchors\"[] — the code each section points at goes in anchors[{path, comments?:[…]}], " +
+                    "not a section-level \"files\"/\"comments\". $schema"
+            }
+            s.anchors.forEachIndexed { j, a ->
+                if (a.path.isNullOrBlank()) return "$where.anchors[$j] is missing \"path\" (a repo-relative changed file). $schema"
+            }
+        }
+        return null
+    }
+
     // ----- Anchor-by-text resolution (line-number accuracy, DESIGN §7) -----
 
     /**
@@ -439,7 +479,8 @@ class DocentMcpToolset : McpToolset {
         fun hunks(path: String) = hunksCache.getOrPut(path) { GitChangeSet.changedLineRanges(base, ref, path) }
 
         val sections = trail.sections.map { section ->
-            section.copy(anchors = section.anchors.map { anchor ->
+            // anchors is non-null by validateTrail, but Gson can still hand us null — guard defensively.
+            section.copy(anchors = (section.anchors ?: emptyList()).map { anchor ->
                 val comments = anchor.comments
                 if (comments.isNullOrEmpty()) anchor
                 else anchor.copy(comments = comments.map { resolveComment(anchor.path, it, fileLines(anchor.path), hunks(anchor.path), warnings) })

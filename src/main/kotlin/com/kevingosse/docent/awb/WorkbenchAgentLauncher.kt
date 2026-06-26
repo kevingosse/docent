@@ -21,16 +21,19 @@ import com.kevingosse.docent.AgentSessionLauncher
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
-    override fun startSession(initialPrompt: String): Boolean {
+    override fun startSession(initialPrompt: String, provider: String): Boolean {
         return try {
             val base = project.basePath ?: return false
             val bridge = AgentPromptLaunchers.find() ?: run {
                 LOG.info("Docent: no prompt-launcher bridge; can't start a new session")
                 return false
             }
+            // AgentSessionProvider is a value class (no entries/values()); match the constants we support.
+            val sessionProvider =
+                if (provider == AgentSessionProvider.CODEX.value) AgentSessionProvider.CODEX else AgentSessionProvider.CLAUDE
             val result = bridge.launch(
                 AgentPromptLaunchRequest(
-                    provider = AgentSessionProvider.CLAUDE,
+                    provider = sessionProvider,
                     projectPath = base,
                     launchMode = AgentSessionLaunchMode.STANDARD,
                     initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt, projectPath = base),

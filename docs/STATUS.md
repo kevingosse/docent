@@ -67,16 +67,28 @@ The optional critic and the surrounding polish:
 - Surface agent **tool calls / thoughts** in the UI (trust via visible verification); make the agent
   command configurable.
 
+- **Review the agent's response-changes.** After **"Complete review"** dispatches the queued *requested
+  changes*, the agent edits the code — but there's no structured way to review *that* delta: you fall back
+  to a raw working-tree diff with no Trail, no narration, no continuity with the remark that prompted it.
+  Close the loop so the response edits are reviewable in the same surface (e.g. a follow-up mini-Trail for
+  the delta, or a resolved/changed state on the original "requested change" card with its edit attached).
+
 ### Smaller backlog
 
-- **Multi-agent provider support (currently Claude-only).** The workbench hosts several agents (Claude,
-  Codex, Junie, …), but the whole live/connect path is hardwired to Claude: the launch contributor only
-  injects the Docent protocol for `CLAUDE` (`awb/DocentLaunchContributor`, Codex is a deferred no-op),
-  the push notifier launches with `provider = CLAUDE` (`awb/DocentEventNotifier`), the "Connect agent…"
-  picker filters the session directory to Claude threads (`awb/WorkbenchSessionDirectory`), and
-  "Start a new agent session" launches a Claude session (`awb/WorkbenchAgentLauncher`). Generalize:
-  carry the provider through `AgentSessionInfo`, let the picker offer other providers, and confirm each
-  one can reach the `docent_*` MCP tools (Codex MCP wiring was unconfirmed — see the launch contributor).
+- **Multi-agent provider support — Claude + Codex wired (0.2.3); other providers still open.** The
+  whole live/connect path is now provider-parameterized rather than hardwired to Claude. Codex differs
+  from Claude in two ways, both handled at launch (`awb/DocentLaunchContributor`): it has no
+  background-watch tool, so it uses **`DeliveryMode.AWAIT`** (blocks on `docent_await_event`) instead of
+  watching the EventLog file; and it has no `--append-system-prompt`, so the Docent protocol is injected
+  via **`-c developer_instructions=<protocol>`** (verified non-destructive) and the 60s MCP tool-call
+  timeout that would kill a quiet await is lifted via **`-c mcp_servers.<name>.tool_timeout_sec=3600`**.
+  The provider is carried through `agentProvider` on the service → the push notifier
+  (`awb/DocentEventNotifier`), the "Connect agent…" picker (`awb/WorkbenchSessionDirectory` lists
+  Claude+Codex), and "Start a new … session" (`awb/WorkbenchAgentLauncher`, per-provider entries).
+  **Known constraints / TODO:** the Codex MCP server name is hardcoded to `rider`
+  (`CODEX_MCP_SERVER_NAME`) — it must match the user's `~/.codex/config.toml` entry pointing at this IDE;
+  make it a setting for non-Rider IDEs. Junie / OpenCode aren't wired (no confirmed MCP path + delivery
+  mode). Built 0.2.3, **not yet click-tested with a live Codex session.**
 - **Comments on unchanged/folded lines in unified** sit inside a collapsed context block until expanded
   (`showWhenFolded = false`); seeded comments are on changed lines so they show today.
 - **Multi-line comment ranges** (comments pin to a single line; the "+" keys off the caret line, not a
