@@ -157,3 +157,26 @@ val runRider by intellijPlatformTesting.runIde.registering {
     }
 }
 }
+
+// --- IntelliJ navigation check -------------------------------------------------------------------
+// Launch a locally-installed IntelliJ IDEA with this plugin, to verify Ctrl-click in the unified diff
+// resolves for Java/Kotlin — where the platform has real PSI — which isolates the unified-diff nav
+// bridge from Rider's backend-only resolution (C# goes through the ReSharper backend, not PSI).
+//   Run:  ./gradlew runIdea -PideaLocalPath="C:/Users/<you>/AppData/Local/Programs/IntelliJ IDEA"
+// (or set ideaLocalPath in ~/.gradle/gradle.properties, or the IDEA_HOME env var). Use an IDEA whose
+// build matches the compile base (262) so the platform API we call resolves at runtime.
+val ideaLocalPath: String? =
+    providers.gradleProperty("ideaLocalPath").orNull?.takeIf { it.isNotBlank() }
+        ?: providers.environmentVariable("IDEA_HOME").orNull?.takeIf { it.isNotBlank() }
+if (ideaLocalPath != null) {
+val ideaLocalDir = file(ideaLocalPath)
+val runIdea by intellijPlatformTesting.runIde.registering {
+    localPath = ideaLocalDir
+    // Same build-262 boot-layout workaround as runRider above (whole lib/ on the classpath + the
+    // sun.swing.text export); harmless on IDEA and required if it shares Rider's 262 boot quirks.
+    task {
+        classpath += fileTree(ideaLocalDir.resolve("lib")) { include("*.jar") }
+        jvmArgs("--add-exports=java.desktop/sun.swing.text=ALL-UNNAMED")
+    }
+}
+}

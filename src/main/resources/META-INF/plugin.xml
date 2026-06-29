@@ -33,6 +33,9 @@
         <!-- Sub-file focus: dims a whole-file diff outside the section's focus range and names each dimmed hunk's
              owning section. Scoped via a request marker (DocentFocusMarker.RANGE); no-ops on every other diff. -->
         <diff.DiffExtension implementation="com.kevingosse.docent.ui.DocentDimmingDiffExtension"/>
+        <!-- Restores Ctrl-click / Ctrl-B go-to-declaration in the unified diff viewer (the side-by-side
+             viewer already navigates on its real "after" editor). No-ops on every non-unified viewer. -->
+        <diff.DiffExtension implementation="com.kevingosse.docent.ui.DocentUnifiedNavExtension"/>
     </extensions>
 
     <actions>
