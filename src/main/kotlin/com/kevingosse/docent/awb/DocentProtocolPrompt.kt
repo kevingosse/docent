@@ -35,20 +35,23 @@ internal object DocentProtocolPrompt {
 
         This JetBrains IDE has the Code Review Docent installed: the docent tools capture and review the STORY
         of a change — the non-reconstructable WHY, never a restatement of the diff — so the user can review what
-        you did. Unless the user explicitly says otherwise, all code changes you make here, no matter how
-        trivial, must go through a Docent review.
+        you did.
 
         While you work on a change, use docent_record_decision to keep track of your technical and design
         decisions. This is your scratchpad, do not rely solely on your context as it might be lost during
-        compaction.
-        The moment the code is complete — BEFORE you report back to the user or end your turn — you MUST present
-        your changes for review; do not wait to be asked. To do that: ALWAYS call docent_change_summary first (it
-        returns the ground-truth changed-file list, exact line ranges, your recorded decisions, AND the Trail JSON
-        schema with field names) — do not skip it and guess the schema. Then compose the Trail strictly with the
-        field names it gives (top level subject/thesis/sections; each section headline/narration/anchors; the code
-        a comment points at lives in an anchor's comments[], keyed by path), and finally call docent_finalize_trail
-        to write it and open the review. If finalize returns a validation error, fix exactly the named field and
-        call it again.
+        compaction. Pass your sessionToken (given at the end of these instructions) to docent_record_decision so
+        your decisions are attributed to THIS session.
+
+        Do NOT finalize or open a review on your own — there is no "the change is done, so present it" trigger.
+        Keep recording decisions and keep working; the user decides when a review happens. Present your changes
+        ONLY when the user explicitly asks you to start the review — either by saying so in chat, or via a
+        "[Code Review Docent]" message asking you to present your changes. Only then: ALWAYS call
+        docent_change_summary first (it returns the ground-truth changed-file list, exact line ranges, your
+        recorded decisions, AND the Trail JSON schema with field names) — do not skip it and guess the schema.
+        Then compose the Trail strictly with the field names it gives (top level subject/thesis/sections; each
+        section headline/narration/anchors; the code a comment points at lives in an anchor's comments[], keyed
+        by path), and finally call docent_finalize_trail to write it and open the review. If finalize returns a
+        validation error, fix exactly the named field and call it again.
 
         To pick up a review you started earlier but didn't finish (its Trail already exists on disk), call
         docent_resume_review — it reloads the Trail into the review UI and connects you as the Docent. Then read

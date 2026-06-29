@@ -17,6 +17,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.AgentSessionInfo
+import com.kevingosse.docent.DecisionLog
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.ReviewEvent
 import com.kevingosse.docent.deliveryModeForProvider
@@ -29,6 +30,8 @@ import java.awt.Cursor
 import java.awt.Point
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
@@ -47,22 +50,44 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private val subject = JBLabel("").apply { border = JBUI.Borders.empty(10, 10, 6, 10) }
     private val planList = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    private val scrollPane = JBScrollPane(planList).apply { border = JBUI.Borders.empty() }
+
+    /** Width (px) available to a wrapping label in the no-trail surface — the viewport width minus row padding,
+     *  tracked from viewport resizes. 0 until first laid out (labels render unwrapped until then). */
+    private var contentWidth = 0
+
     private val queueLabel = JBLabel("").apply { foreground = JBColor.GRAY }
     private val connectButton = JButton("Connect agent…").apply { addActionListener { connectAgent() } }
+    private val completeButton = JButton("Complete review").apply { addActionListener { completeReview() } }
     private val connectionLabel = JBLabel("").apply { foreground = JBColor.GRAY }
 
     /** The title of the session linked via the UI picker, for the status label (null when linked via the MCP
      *  handoff — we don't know its title then — or when not connected). */
     private var linkedTitle: String? = null
 
+    /** The session we just asked to start a review (no trail loaded yet), so the empty state can show a
+     *  "preparing…" line until its docent_finalize_trail loads the trail here. Cleared once a trail loads. */
+    private var awaitingStartFrom: String? = null
+
     init {
         add(subject, BorderLayout.NORTH)
-        add(JBScrollPane(planList).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+        add(scrollPane, BorderLayout.CENTER)
+        // Track the usable width so the no-trail surface's prose/session rows wrap to the tool-window width
+        // (a JBLabel only wraps when an explicit width is baked into its HTML). Rebuild on meaningful changes.
+        scrollPane.viewport.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) {
+                val w = scrollPane.viewport.width - JBUI.scale(32)
+                if (w > 0 && kotlin.math.abs(w - contentWidth) >= JBUI.scale(8)) {
+                    contentWidth = w
+                    if (controller.trail == null) refreshList()
+                }
+            }
+        })
         add(
             JPanel(FlowLayout(FlowLayout.LEFT)).apply {
                 add(JButton("Load trail…").apply { addActionListener { loadTrail() } })
                 add(connectButton)
-                add(JButton("Complete review").apply { addActionListener { completeReview() } })
+                add(completeButton)
                 add(connectionLabel)
                 add(queueLabel)
             },
@@ -74,15 +99,26 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         DocentReviewService.getInstance(project).onChangesUpdated = {
             ApplicationManager.getApplication().invokeLater({ updateQueueLabel() }, ModalityState.any())
         }
+        // Live-refresh the "ready for review" empty state as the agent records decisions off-EDT (its scratchpad
+        // grows). Only matters when no trail is loaded — that's the surface that lists sessions + pending counts.
+        DecisionLog.getInstance(project).onUpdated = {
+            ApplicationManager.getApplication().invokeLater({ if (controller.trail == null) refreshList() }, ModalityState.any())
+        }
         rebuild()
     }
 
     override fun onModelChanged() = rebuild()
     override fun onSelectionChanged() = refreshList()
-    override fun onConnectionChanged() = updateConnectionState()
+    override fun onConnectionChanged() {
+        updateConnectionState()
+        // The no-trail surface depends on the workbench seams + connection; rebuild it when they change so a
+        // post-restart "Agent Workbench isn't available" flips to the session list once the seams install.
+        if (controller.trail == null) refreshList()
+    }
 
     private fun rebuild() {
         val j = controller.trail
+        if (j != null) awaitingStartFrom = null // a trail loaded — the "preparing…" line is done its job
         subject.text = when {
             j != null -> "<html><b>${escapeHtml(j.subject)}</b></html>"
             else -> "<html><b>Code Review Docent</b></html>"
@@ -96,14 +132,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         planList.removeAll()
         val j = controller.trail
         if (j == null) {
-            planList.add(
-                JBLabel(
-                    "<html>" + escapeHtml(
-                        controller.loadError?.let { "Couldn't load the trail:\n$it" }
-                            ?: "No trail loaded.",
-                    ).replace("\n", "<br>") + "</html>",
-                ).apply { border = JBUI.Borders.empty(10); foreground = JBColor.GRAY },
-            )
+            buildStartReviewState()
         } else {
             planList.add(overviewRow())
             j.sections.forEachIndexed { i, section ->
@@ -117,6 +146,75 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         planList.revalidate()
         planList.repaint()
     }
+
+    /**
+     * The no-trail surface — the on-demand review trigger lives here (DESIGN: don't auto-open after every
+     * change). While the agent records decisions but withholds the review, this lists the live workbench
+     * sessions, annotates each with how many pending decisions it recorded (a hint — any session is selectable),
+     * and starts the review on the one you click (pushes START_REVIEW; the agent finalizes and opens it here).
+     */
+    private fun buildStartReviewState() {
+        // A load error wins — the user explicitly tried to open a trail that didn't read.
+        controller.loadError?.let {
+            planList.add(messageLabel("Couldn't load the trail:\n$it"))
+            return
+        }
+
+        val service = DocentReviewService.getInstance(project)
+        val total = DecisionLog.getInstance(project).count()
+        planList.add(
+            messageLabel(
+                if (total == 0) "No review in progress. Decisions are recorded as the agent works — start a review here when you're ready."
+                else "$total decision${if (total == 1) "" else "s"} recorded. Pick the session that made the changes to start its review:",
+            ),
+        )
+
+        awaitingStartFrom?.let { planList.add(messageLabel("⟳  Asked $it to prepare the review…")) }
+
+        val directory = service.sessionDirectory
+        if (directory == null || service.eventNotifier == null) {
+            planList.add(messageLabel("Agent Workbench isn't available. Ask the agent to call docent_finalize_trail, or use “Load trail…”."))
+            return
+        }
+        val sessions = directory.listSessions()
+        if (sessions.isEmpty()) {
+            planList.add(messageLabel("No live agent sessions. Open the one that made the changes and it'll appear here."))
+            return
+        }
+        // Float the session that recorded the most pending decisions to the top (the likeliest author); the count
+        // is only a hint, so every session stays clickable in the directory's recency order otherwise.
+        val counts = DecisionLog.getInstance(project).countsBySession()
+        sessions.sortedByDescending { counts[it.threadId] ?: 0 }
+            .forEach { planList.add(sessionStartRow(it, counts[it.threadId] ?: 0)) }
+    }
+
+    /** A wrapped, gray prose line for the no-trail surface (instructions / status). */
+    private fun messageLabel(text: String): JComponent =
+        JBLabel(wrapHtml(escapeHtml(text).replace("\n", "<br>"))).apply {
+            border = JBUI.Borders.empty(8, 10)
+            foreground = JBColor.GRAY
+        }
+
+    /** A clickable session row in the no-trail surface; clicking starts the review on that session. */
+    private fun sessionStartRow(s: AgentSessionInfo, pending: Int): JComponent {
+        val title = escapeHtml(s.title.ifBlank { "(untitled session)" })
+        val parts = buildList {
+            if (pending > 0) add("$pending pending")
+            relativeTime(s.updatedAt).takeIf { it.isNotEmpty() }?.let { add(it) }
+        }
+        val suffix = if (parts.isEmpty()) "" else
+            "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;" + parts.joinToString("&nbsp;·&nbsp;") { escapeHtml(it) } + "</font>"
+        val label = JBLabel(wrapHtml("&#x25B8;&nbsp;<b>$title</b>$suffix")).apply {
+            toolTipText = "Start the Docent review on this session"
+        }
+        return clickableRow(label, false, JBUI.Borders.empty(5, 10)) { sendStartReview(s) }
+    }
+
+    /** Wrap [inner] HTML so a [JBLabel] line-wraps to the tracked [contentWidth] (Swing labels only wrap when
+     *  an explicit pixel width is given). Falls back to unconstrained HTML before the first layout sizes us. */
+    private fun wrapHtml(inner: String): String =
+        if (contentWidth > JBUI.scale(60)) "<html><div style='width:${contentWidth}px'>$inner</div></html>"
+        else "<html>$inner</html>"
 
     private fun overviewRow(): JComponent {
         val isCurrent = controller.reviewTabOpen && controller.currentSectionIndex < 0
@@ -160,6 +258,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             add(label, BorderLayout.CENTER)
         }
         installClick(row, action)
+        // Width-baked HTML gives the label a correct multi-line preferred height at construction, so clamping the
+        // row's max height to it keeps BoxLayout from stretching the row.
         row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
         return row
     }
@@ -234,6 +334,31 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // The button sits at the bottom of the tool window, so show the popup ABOVE it rather than below.
         val height = popup.content.preferredSize.height
         popup.show(RelativePoint(connectButton, Point(0, -height)))
+    }
+
+    /** Ask [picked] to finalize and open the review now (clicked from the no-trail surface). No review is armed
+     *  yet, so we set the push-target fields the notifier reads directly; the agent's docent_finalize_trail
+     *  re-links authoritatively via its sessionToken. The empty state then shows a "preparing…" line until the
+     *  trail loads here. */
+    private fun sendStartReview(picked: AgentSessionInfo) {
+        val service = DocentReviewService.getInstance(project)
+        linkedTitle = picked.title
+        service.agentProvider = picked.provider
+        service.deliveryMode = deliveryModeForProvider(picked.provider)
+        service.agentThreadId = picked.threadId
+        val pushed = service.eventNotifier?.notifyAgent(
+            ReviewEvent(id = "", kind = DocentReviewService.START_REVIEW),
+        ) ?: false
+        if (pushed) {
+            awaitingStartFrom = picked.title.ifBlank { "the agent" }
+            refreshList()
+        } else {
+            Messages.showInfoMessage(
+                project,
+                "Couldn't message that session. Ask the agent in chat to call docent_finalize_trail to start the review.",
+                "Start Review",
+            )
+        }
     }
 
     private fun choiceLabel(c: ConnectChoice): String = when (c) {
@@ -325,6 +450,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val service = DocentReviewService.getInstance(project)
         val hasTrail = controller.trail != null
         connectButton.isEnabled = hasTrail
+        // "Complete review" only makes sense while a review is actually in progress.
+        completeButton.isVisible = service.reviewActive
         if (!service.reviewActive) linkedTitle = null
         connectionLabel.text = when {
             service.reviewActive -> "  ● ${linkedTitle?.let { "Connected: $it" } ?: "Agent connected"}"
@@ -358,6 +485,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     override fun dispose() {
         controller.removeListener(this)
         DocentReviewService.getInstance(project).onChangesUpdated = null
+        DecisionLog.getInstance(project).onUpdated = null
     }
 
     /** An entry in the "Connect agent" picker: start a fresh session of [provider], or connect an existing one. */

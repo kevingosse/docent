@@ -29,6 +29,9 @@ class DocentWorkbenchSetup : ProjectActivity {
             service.sessionLauncher = WorkbenchAgentLauncher(project)
             service.eventNotifier = DocentEventNotifier(project)
             service.agentProjectPath = project.basePath
+            // The nav panel may have built its no-trail surface before these seams existed (post-restart race),
+            // showing "Agent Workbench isn't available". Nudge it to rebuild now that the session list works.
+            service.onConnectionChanged?.invoke()
         }
     }
 }

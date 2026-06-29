@@ -4,9 +4,14 @@ import com.intellij.platform.ai.agent.core.session.AgentSessionProvider
 import com.intellij.agent.workbench.prompt.core.AgentPromptInitialMessageRequest
 import com.intellij.agent.workbench.prompt.core.AgentPromptLaunchRequest
 import com.intellij.agent.workbench.prompt.core.AgentPromptLaunchers
+import com.intellij.agent.workbench.sessions.state.AgentSessionsStateStore
 import com.intellij.platform.ai.agent.core.session.AgentSessionLaunchMode
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.vfs.VirtualFile
 import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.EventLog
@@ -14,20 +19,23 @@ import com.kevingosse.docent.EventNotifier
 import com.kevingosse.docent.ReviewEvent
 
 /**
- * Pushes a reviewer event straight into an agent's existing workbench thread. In the Monitor-delivery world
- * this is needed for exactly one case: waking an *idle* agent the human picked in "Connect agent…" with a
- * `REVIEW_RESUMED` event (it isn't in a turn, so there's no other way to reach it). The pushed message hands
- * the agent its role *and the watch command* for this review's [EventLog]; ongoing reviewer actions then flow
- * through that file watch, not through here. Installed onto the service by [DocentLaunchContributor] /
- * [DocentWorkbenchSetup]; the [DocentReviewService.agentThreadId] captured at link time is the thread we target.
+ * Pushes a reviewer event straight into an agent's existing workbench thread — used to wake a session that
+ * isn't in a turn: the `REVIEW_RESUMED` event from "Connect agent…" and the `START_REVIEW` event from the
+ * on-demand review trigger. Installed onto the service by [DocentLaunchContributor] / [DocentWorkbenchSetup];
+ * the [DocentReviewService.agentThreadId] captured at link time is the thread we target.
  *
- * Uses the workbench prompt-launcher bridge (`AgentPromptLaunchers.find().launch(...)` with `targetThreadId`),
- * the same "send to an existing session" path the global prompt palette uses. The bridge dispatches the
- * send asynchronously on its own scope, so this is safe to call from the EDT and returns promptly.
+ * Two delivery channels, tried in order ([notifyAgent]):
+ *  1. **Open chat-tab terminal** ([sendViaOpenTabTerminal]) — type the prompt into the session's live terminal,
+ *     the same path the workbench's own file-drop / initial-message dispatch use. This is the ONLY channel that
+ *     works when the persisted session store is empty (the .slnx listing bug), and it covers the common case
+ *     where the picked session is an open tab.
+ *  2. **Prompt-launcher bridge** ([AgentPromptLaunchers] with `targetThreadId`) — the supported "send to an
+ *     existing session" API, but it resolves the target from the persisted store, so it only reaches idle/closed
+ *     sessions and fails `TARGET_THREAD_NOT_FOUND` for .slnx solutions whose store has no threads.
  *
- * It's `@Internal`/unstable workbench API → lives in the optional, gated `awb/` module. Every workbench-API
- * touch is wrapped defensively; any failure returns false (the review is still armed — the agent can be told
- * to resume manually).
+ * It's `@Internal`/unstable workbench API → lives in the optional, gated `awb/` module, and channel 1 reaches the
+ * editor's terminal by reflection. Every workbench touch is wrapped defensively; any failure returns false (the
+ * review is still armed — the agent can be told to resume manually).
  */
 internal class DocentEventNotifier(private val project: Project) : EventNotifier {
 
@@ -38,7 +46,18 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 LOG.info("Docent: no captured agent thread id; falling back to the poll path")
                 return false
             }
-            val projectPath = service.agentProjectPath?.takeIf { it.isNotBlank() }
+            val prompt = buildPrompt(event)
+
+            // Primary channel: type the prompt into the session's OPEN chat-tab terminal (how the workbench's own
+            // file-drop / initial-message dispatch deliver). This is the only thing that works when the persisted
+            // session store is empty — the .slnx listing bug — where the launcher below fails TARGET_THREAD_NOT_FOUND.
+            if (sendViaOpenTabTerminal(threadId, prompt)) return true
+
+            // Fallback for an idle/closed session (no open tab): the supported prompt-launcher push. The workbench
+            // resolves the target by finding the thread UNDER the request's project path (case/separator-sensitive),
+            // and a thread may live under the dedicated chat-frame project, so pass the path the store records for it.
+            val projectPath = ownerProjectPath(threadId)
+                ?: service.agentProjectPath?.takeIf { it.isNotBlank() }
                 ?: project.basePath
                 ?: return false
 
@@ -47,7 +66,6 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 return false
             }
 
-            val prompt = buildPrompt(event)
             val result = bridge.launch(
                 AgentPromptLaunchRequest(
                     provider = providerOf(service.agentProvider),
@@ -58,7 +76,10 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 ),
             )
             if (!result.launched) {
-                LOG.info("Docent: push to thread $threadId not delivered (${result.error}); falling back to the poll path")
+                LOG.info(
+                    "Docent: push to thread $threadId (project=$projectPath) not delivered (${result.error}); " +
+                        "falling back to the poll path. Known store paths: ${storeProjectPaths()}",
+                )
             }
             result.launched
         } catch (t: Throwable) {
@@ -66,6 +87,74 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
             false
         }
     }
+
+    /**
+     * Deliver [prompt] straight to the agent by typing it into its OPEN chat tab's terminal — the same
+     * mechanism the workbench's own file-drop / initial-message dispatch use (`AgentChatFileEditor.tab.sendText`).
+     * This is the only working channel when the persisted session store is empty (the .slnx listing bug), where
+     * [AgentPromptLaunchers] fails with TARGET_THREAD_NOT_FOUND. Everything here is `@Internal`, so the editor's
+     * terminal tab is reached by reflection; any miss returns false and the caller falls back to the launcher.
+     */
+    private fun sendViaOpenTabTerminal(threadId: String, prompt: String): Boolean {
+        return try {
+            val (proj, vf) = findOpenChatTab(threadId) ?: return false
+            val editor = FileEditorManager.getInstance(proj).getEditors(vf)
+                .firstOrNull { it.javaClass.name == AGENT_CHAT_FILE_EDITOR_FQN } ?: return false
+            val tab = editor.javaClass.getDeclaredField("tab").apply { isAccessible = true }.get(editor) ?: run {
+                LOG.info("Docent: open chat tab for $threadId has no live terminal yet; trying the launcher")
+                return false
+            }
+            // sendText(text, shouldExecute, useBracketedPasteMode) — execute it, bracketed-paste so multi-line is intact.
+            // setAccessible bypasses the language check: the method is public but its declaring class
+            // (ToolWindowAgentChatTerminalTab) is `internal`, so a plain invoke throws IllegalAccessException.
+            val sendText = tab.javaClass.methods.firstOrNull { it.name == "sendText" && it.parameterCount == 3 } ?: return false
+            sendText.isAccessible = true
+            sendText.invoke(tab, prompt, true, true)
+            LOG.info("Docent: delivered to open chat tab for thread $threadId via terminal sendText")
+            true
+        } catch (t: Throwable) {
+            LOG.warn("Docent: terminal sendText to the open chat tab failed for thread $threadId; trying the launcher", t)
+            false
+        }
+    }
+
+    /** The open AgentChatVirtualFile (and its project) whose thread/session id is [threadId], across all open
+     *  projects (the workbench can host chats in a dedicated frame). Read reflectively — the type is `@Internal`. */
+    private fun findOpenChatTab(threadId: String): Pair<Project, VirtualFile>? {
+        for (p in ProjectManager.getInstance().openProjects) {
+            if (p.isDisposed) continue
+            val files = runCatching { FileEditorManager.getInstance(p).openFiles.asList() }.getOrDefault(emptyList())
+            for (vf in files) {
+                if (vf.javaClass.name != AGENT_CHAT_VFILE_FQN) continue
+                val id = invokeString(vf, "getThreadId")?.takeIf { it.isNotBlank() }
+                    ?: invokeString(vf, "getSessionId")?.takeIf { it.isNotBlank() }
+                if (id == threadId) return p to vf
+            }
+        }
+        return null
+    }
+
+    private fun invokeString(target: Any, method: String): String? =
+        runCatching { target.javaClass.getMethod(method).invoke(target) as? String }.getOrNull()
+
+    /**
+     * The project path the workbench's session store records for [threadId] — the exact string its prompt
+     * launcher matches against (`AgentSessionLaunchService.findPromptTargetThread`), scanning both projects and
+     * their worktrees. Returns null when the thread isn't persisted (so the caller falls back to our path).
+     */
+    private fun ownerProjectPath(threadId: String): String? = runCatching {
+        val state = service<AgentSessionsStateStore>().snapshot()
+        for (p in state.projects) {
+            if (p.threads.any { it.id == threadId && !it.archived }) return@runCatching p.path
+            for (w in p.worktrees) if (w.threads.any { it.id == threadId && !it.archived }) return@runCatching w.path
+        }
+        null
+    }.getOrNull()
+
+    /** Project + worktree paths the store knows, for diagnosing a TARGET_THREAD_NOT_FOUND push. */
+    private fun storeProjectPaths(): List<String> = runCatching {
+        service<AgentSessionsStateStore>().snapshot().projects.flatMap { p -> listOf(p.path) + p.worktrees.map { it.path } }
+    }.getOrDefault(emptyList())
 
     /** Render an event as a prompt the agent receives as a new user turn in its existing session. */
     private fun buildPrompt(event: ReviewEvent): String = buildString {
@@ -75,6 +164,23 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 appendLine("The reviewer has completed the review. Implement the queued changes now (editing is")
                 appendLine("allowed); there is nothing more to wait for after this. Queued changes:")
                 appendLine(event.text.ifBlank { "(none)" })
+            }
+
+            DocentReviewService.START_REVIEW -> {
+                appendLine("The reviewer is ready — present your changes for review now.")
+                appendLine(
+                    "If the docent tools aren't in your tool list, discover them first with a tool search " +
+                        "(limit 50): docent_record_decision docent_list_decisions docent_change_summary " +
+                        "docent_finalize_trail docent_reply docent_queue_change docent_resume_review.",
+                )
+                appendLine(
+                    "Then: call docent_change_summary first (it returns the ground-truth changed files, exact " +
+                        "line ranges, your recorded decisions, AND the Trail JSON schema). Compose the Trail " +
+                        "strictly from your recorded decisions using those field names, and call " +
+                        "docent_finalize_trail to write it and open the review — pass your sessionToken so the " +
+                        "review routes back to THIS session. If finalize returns a validation error, fix exactly " +
+                        "the named field and call it again.",
+                )
             }
 
             DocentReviewService.REVIEW_RESUMED -> {
@@ -141,6 +247,10 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
 
     private companion object {
         private val LOG = logger<DocentEventNotifier>()
+
+        /** `@Internal` workbench types reached by reflection (see [sendViaOpenTabTerminal]); matched on FQN. */
+        private const val AGENT_CHAT_VFILE_FQN = "com.intellij.agent.workbench.chat.AgentChatVirtualFile"
+        private const val AGENT_CHAT_FILE_EDITOR_FQN = "com.intellij.agent.workbench.chat.AgentChatFileEditor"
 
         /** Map a stored provider value (`AgentSessionProvider.value`) back to the provider for the launch request;
          *  default to Claude when unknown/null (the historical single-provider case). `AgentSessionProvider` is a

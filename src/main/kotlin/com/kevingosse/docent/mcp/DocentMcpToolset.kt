@@ -256,7 +256,8 @@ class DocentMcpToolset : McpToolset {
         |  - surprise: you discovered something non-obvious mid-task;
         |  - verification: you checked a claim against ground truth (and what you found).
         |The full authoring flow: record_decision (repeatedly) -> change_summary -> compose Trail ->
-        |finalize_trail. Use docent_list_decisions to review what you've logged.
+        |finalize_trail. Do NOT finalize on your own — keep recording until the user asks you to start the
+        |review (see docent_finalize_trail). Use docent_list_decisions to review what you've logged.
         """
     )
     suspend fun docent_record_decision(
@@ -273,12 +274,19 @@ class DocentMcpToolset : McpToolset {
                 "numbers — code keeps moving; concrete line ranges are resolved at finalize against the final diff."
         )
         symbol: String = "",
+        @McpDescription(
+            "Your sessionToken from your system instructions, so this decision is attributed to THIS session — " +
+                "the IDE's \"Start review\" picker uses the per-session counts to suggest which session to review. " +
+                "Omit only if you have no sessionToken."
+        )
+        sessionToken: String = "",
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
         val fileList = files.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }
-        val id = DecisionLog.getInstance(project).record(decision, kind.trim(), alternatives.trim(), fileList, symbol.trim())
-        return "Recorded decision #$id. Keep recording as you work; call docent_change_summary then " +
-            "docent_finalize_trail when the change-set is done."
+        val id = DecisionLog.getInstance(project)
+            .record(decision, kind.trim(), alternatives.trim(), fileList, symbol.trim(), sessionToken.trim())
+        return "Recorded decision #$id. Keep recording as you work; present the review only when the user asks " +
+            "to start it (then call docent_change_summary, compose the Trail, and docent_finalize_trail)."
     }
 
     @McpTool

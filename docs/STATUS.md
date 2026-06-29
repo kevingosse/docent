@@ -73,14 +73,27 @@ The optional critic and the surrounding polish:
   Close the loop so the response edits are reviewable in the same surface (e.g. a follow-up mini-Trail for
   the delta, or a resolved/changed state on the original "requested change" card with its edit attached).
 
-- **On-demand review mode (don't auto-open after every change).** Today the protocol tells the agent to
-  finalize a Trail and open the review the moment any change is complete, however trivial — which gets in
-  the way while the user is still iterating on a design across several rounds. Add an opt-in mode where the
-  agent **keeps recording decisions** (`docent_record_decision`) as it works but does **not** call
-  `docent_finalize_trail` until the user explicitly asks — either by telling the agent in chat, or via an
-  IDE **"Start review"** action that sends a start-review message to the chosen agent session (reuse the
-  `AgentPromptLaunchers` push path that "Connect agent…" already uses). The accumulated decision log spans
-  the whole iteration, so the eventual Trail covers the final design, not each intermediate step.
+- **On-demand review mode — BUILT 0.2.15, partially click-tested.** The protocol no longer tells the agent to
+  auto-finalize the moment a change is complete; it **keeps recording decisions** (`docent_record_decision`,
+  now tagged with the agent's `sessionToken`) and only finalizes when the user explicitly asks — in chat, or
+  by clicking a session in the **nav rail's no-trail surface**. That surface (what used to just say "No trail
+  loaded") is now the on-demand trigger: it shows the recorded-decision count and lists the live workbench
+  sessions as clickable rows, each annotated with its **pending-decision count** (a pick hint; any session is
+  selectable). Clicking one pushes a `START_REVIEW` event to that session through the existing
+  `AgentPromptLaunchers` path and shows a "preparing…" line; the agent then runs `docent_change_summary` →
+  `docent_finalize_trail`, which arms/opens the review here as before. The list live-refreshes as decisions are
+  recorded (`DecisionLog.onUpdated`). The accumulated decision log spans the whole iteration, so the eventual
+  Trail covers the final design, not each intermediate step. **Survives restarts:** the decision log is
+  persisted to `<repo>/.idea/docent/decisions.json` and reloaded on open (consumed/deleted by finalize/clear),
+  and `DocentWorkbenchSetup` nudges the rail to re-list once the workbench seams install after a restart (so it
+  no longer sticks on "Agent Workbench isn't available"). The no-trail surface **word-wraps** (HTML
+  `JBLabel`s with width-baked HTML), and **"Complete review"** is hidden unless a review is active. The
+  START_REVIEW message is delivered by **typing it into the session's open chat-tab terminal**
+  (`AgentChatFileEditor.tab.sendText`, reflectively — the same path the workbench's own file-drop/initial-message
+  dispatch use), with the supported `AgentPromptLaunchers` push as a fallback for idle/closed tabs. The launcher
+  push alone fails on **.slnx** solutions: their persisted session store has empty thread lists (the
+  `awb-slnx-session-listing-bug`), so `findPromptTargetThread` never finds the thread (`TARGET_THREAD_NOT_FOUND`)
+  even though we can list it from the live open tab. The same terminal-send path also backs "Connect agent…".
 
 ### Smaller backlog
 

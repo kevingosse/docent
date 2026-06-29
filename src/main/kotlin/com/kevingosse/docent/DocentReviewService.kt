@@ -235,6 +235,7 @@ class DocentReviewService(private val project: Project) {
     companion object {
         const val REVIEW_COMPLETED = "review_completed"
         const val REVIEW_RESUMED = "review_resumed"
+        const val START_REVIEW = "start_review"
         const val KIND_MESSAGE = "message"
         const val KIND_COMMENT = "comment"
 
