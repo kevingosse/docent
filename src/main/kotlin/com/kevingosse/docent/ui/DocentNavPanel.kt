@@ -1,5 +1,6 @@
 package com.kevingosse.docent.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -14,6 +15,7 @@ import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.AgentSessionInfo
@@ -29,6 +31,7 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.Point
 import java.awt.Dimension
+import java.awt.Rectangle
 import java.awt.FlowLayout
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
@@ -38,6 +41,9 @@ import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.ScrollPaneConstants
+import javax.swing.Scrollable
+import javax.swing.SwingUtilities
 
 /**
  * The navigation rail, hosted in the left "Docent" tool window (see [DocentToolWindowFactory]). Lists the
@@ -49,8 +55,18 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val controller = DocentReviewController.getInstance(project)
 
     private val subject = JBLabel("").apply { border = JBUI.Borders.empty(10, 10, 6, 10) }
-    private val planList = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-    private val scrollPane = JBScrollPane(planList).apply { border = JBUI.Borders.empty() }
+    private val planList = object : JPanel(), Scrollable {
+        init { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+        override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+        override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int) = JBUI.scale(16)
+        override fun getScrollableBlockIncrement(visibleRect: Rectangle, orientation: Int, direction: Int) = visibleRect.height
+        override fun getScrollableTracksViewportWidth() = true
+        override fun getScrollableTracksViewportHeight() = false
+    }
+    private val scrollPane = JBScrollPane(planList).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+    }
 
     /** Width (px) available to a wrapping label in the no-trail surface — the viewport width minus row padding,
      *  tracked from viewport resizes. 0 until first laid out (labels render unwrapped until then). */
@@ -72,14 +88,14 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     init {
         add(subject, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
-        // Track the usable width so the no-trail surface's prose/session rows wrap to the tool-window width
-        // (a JBLabel only wraps when an explicit width is baked into its HTML). Rebuild on meaningful changes.
-        scrollPane.viewport.addComponentListener(object : ComponentAdapter() {
+        // Track the usable width so every HTML label wraps to the tool-window width (a JBLabel only wraps when
+        // an explicit width is baked into its HTML). Rebuild on meaningful changes.
+        planList.addComponentListener(object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent) {
-                val w = scrollPane.viewport.width - JBUI.scale(32)
+                val w = planList.width - JBUI.scale(24)
                 if (w > 0 && kotlin.math.abs(w - contentWidth) >= JBUI.scale(8)) {
                     contentWidth = w
-                    if (controller.trail == null) refreshList()
+                    refreshList()
                 }
             }
         })
@@ -120,7 +136,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val j = controller.trail
         if (j != null) awaitingStartFrom = null // a trail loaded — the "preparing…" line is done its job
         subject.text = when {
-            j != null -> "<html><b>${escapeHtml(j.subject)}</b></html>"
+            j != null -> wrapHtml("<b>${escapeHtml(j.subject)}</b>")
             else -> "<html><b>Code Review Docent</b></html>"
         }
         refreshList()
@@ -184,15 +200,45 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // Float the session that recorded the most pending decisions to the top (the likeliest author); the count
         // is only a hint, so every session stays clickable in the directory's recency order otherwise.
         val counts = DecisionLog.getInstance(project).countsBySession()
+        planList.add(sectionHeader("Sessions"))
         sessions.sortedByDescending { counts[it.threadId] ?: 0 }
             .forEach { planList.add(sessionStartRow(it, counts[it.threadId] ?: 0)) }
     }
 
     /** A wrapped, gray prose line for the no-trail surface (instructions / status). */
     private fun messageLabel(text: String): JComponent =
-        JBLabel(wrapHtml(escapeHtml(text).replace("\n", "<br>"))).apply {
+        WrappingMessageArea(text).apply {
+            isEditable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
             border = JBUI.Borders.empty(8, 10)
             foreground = JBColor.GRAY
+            font = UIUtil.getLabelFont()
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+
+    /** JBTextArea wraps during painting, but BoxLayout asks preferred height before assigning final width.
+     *  Size it to the current list width first so the message gets enough height and no horizontal clipping. */
+    private class WrappingMessageArea(text: String) : JBTextArea(text) {
+        override fun getPreferredSize(): Dimension {
+            val available = parent?.width?.takeIf { it > 0 } ?: width
+            if (available > 0) setSize(available, Short.MAX_VALUE.toInt())
+            return super.getPreferredSize().apply { if (available > 0) width = available }
+        }
+
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+
+        override fun getAlignmentX(): Float = LEFT_ALIGNMENT
+    }
+    private fun sectionHeader(text: String): JComponent =
+        JBLabel(text.uppercase()).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = JBColor.GRAY
+            border = JBUI.Borders.empty(12, 10, 4, 10)
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
         }
 
     /** A clickable session row in the no-trail surface; clicking starts the review on that session. */
@@ -204,7 +250,10 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
         val suffix = if (parts.isEmpty()) "" else
             "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;" + parts.joinToString("&nbsp;·&nbsp;") { escapeHtml(it) } + "</font>"
-        val label = JBLabel(wrapHtml("&#x25B8;&nbsp;<b>$title</b>$suffix")).apply {
+        val execIcon = AllIcons.Actions.Execute
+        val label = JBLabel(wrapHtml("<b>$title</b>$suffix", execIcon.iconWidth + JBUI.scale(6))).apply {
+            icon = execIcon
+            iconTextGap = JBUI.scale(6)
             toolTipText = "Start the Docent review on this session"
         }
         return clickableRow(label, false, JBUI.Borders.empty(5, 10)) { sendStartReview(s) }
@@ -212,14 +261,16 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /** Wrap [inner] HTML so a [JBLabel] line-wraps to the tracked [contentWidth] (Swing labels only wrap when
      *  an explicit pixel width is given). Falls back to unconstrained HTML before the first layout sizes us. */
-    private fun wrapHtml(inner: String): String =
-        if (contentWidth > JBUI.scale(60)) "<html><div style='width:${contentWidth}px'>$inner</div></html>"
+    private fun wrapHtml(inner: String, extraInset: Int = 0): String {
+        val w = contentWidth - extraInset
+        return if (w > JBUI.scale(60)) "<html><div style='width:${w}px'>$inner</div></html>"
         else "<html>$inner</html>"
+    }
 
     private fun overviewRow(): JComponent {
         val isCurrent = controller.reviewTabOpen && controller.currentSectionIndex < 0
         val fg = if (isCurrent) UIUtil.getListSelectionForeground(true) else JBColor.foreground()
-        val label = JBLabel("<html><b>Overview</b></html>").apply { foreground = fg }
+        val label = JBLabel(wrapHtml("<b>Overview</b>")).apply { foreground = fg }
         return clickableRow(label, isCurrent, JBUI.Borders.empty(6, 8)) { controller.showOverview() }
     }
 
@@ -230,9 +281,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             index == controller.currentSectionIndex && controller.currentFileIndex < 0
         val glyph = if (controller.visited.contains(index)) "&#x2713;" else "&#x25CB;" // ✓ / ○
         val fg = if (isCurrent) UIUtil.getListSelectionForeground(true) else JBColor.foreground()
-        val label = JBLabel(
-            "<html>$glyph&nbsp;&nbsp;<b>${index + 1}.</b>&nbsp;${escapeHtml(section.headline)}</html>"
-        ).apply { foreground = fg }
+        val label = JBLabel(wrapHtml(
+            "$glyph&nbsp;&nbsp;<b>${index + 1}.</b>&nbsp;${escapeHtml(section.headline)}",
+        )).apply { foreground = fg }
         return clickableRow(label, isCurrent, JBUI.Borders.empty(6, 8)) { controller.selectSection(index) }
     }
 
@@ -241,7 +292,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             sectionIndex == controller.currentSectionIndex && fileIndex == controller.currentFileIndex
         val name = anchor.path.substringAfterLast('/')
         val fg = if (isSelected) UIUtil.getListSelectionForeground(true) else JBColor.foreground()
-        val label = JBLabel("<html>&nbsp;&nbsp;&nbsp;&#x25B8;&nbsp;${escapeHtml(name)}</html>").apply {
+        val label = JBLabel(wrapHtml("&nbsp;&nbsp;&nbsp;&#x25B8;&nbsp;${escapeHtml(name)}")).apply {
             foreground = fg
             toolTipText = anchor.path
         }
@@ -258,8 +309,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             add(label, BorderLayout.CENTER)
         }
         installClick(row, action)
-        // Width-baked HTML gives the label a correct multi-line preferred height at construction, so clamping the
-        // row's max height to it keeps BoxLayout from stretching the row.
+        if (!highlighted) installHover(row)
         row.maximumSize = Dimension(Int.MAX_VALUE, row.preferredSize.height)
         return row
     }
@@ -273,6 +323,28 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun installClick(row: JComponent, action: () -> Unit) {
         val adapter = object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) = action()
+        }
+        fun attach(c: Component) {
+            c.addMouseListener(adapter)
+            if (c is java.awt.Container) c.components.forEach { attach(it) }
+        }
+        attach(row)
+    }
+
+    private fun installHover(row: JPanel) {
+        val adapter = object : MouseAdapter() {
+            override fun mouseEntered(e: MouseEvent) {
+                row.isOpaque = true
+                row.background = HOVER_BG
+                row.repaint()
+            }
+            override fun mouseExited(e: MouseEvent) {
+                val p = SwingUtilities.convertPoint(e.component, e.point, row)
+                if (!row.contains(p)) {
+                    row.isOpaque = false
+                    row.repaint()
+                }
+            }
         }
         fun attach(c: Component) {
             c.addMouseListener(adapter)
@@ -496,6 +568,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private companion object {
         private val CONNECTED = JBColor(Color(0x4C9A4E), Color(0x62B266))
+        private val HOVER_BG = JBColor(Color(0xEDF4FE), Color(0x2E3034))
 
         /** Providers the UI offers a "start a new session" entry for (value → display label). Matches the
          *  providers the Docent can drive (Claude, Codex); see WorkbenchSessionDirectory.SUPPORTED_PROVIDERS. */
