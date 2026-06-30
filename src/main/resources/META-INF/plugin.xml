@@ -23,7 +23,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- Navigation (sections + files) lives in a left tool window; the review opens in the editor pane. -->
-        <toolWindow id="Docent" anchor="left" canCloseContents="false"
+        <toolWindow id="Code Review Docent" anchor="left" canCloseContents="false"
                     icon="/icons/docent.svg"
                     factoryClass="com.kevingosse.docent.DocentToolWindowFactory"/>
         <!-- The review itself opens as a main-pane editor tab, driven by the nav tool window. -->

@@ -137,7 +137,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         if (j != null) awaitingStartFrom = null // a trail loaded — the "preparing…" line is done its job
         subject.text = when {
             j != null -> wrapHtml("<b>${escapeHtml(j.subject)}</b>")
-            else -> "<html><b>Code Review Docent</b></html>"
+            else -> ""
         }
         refreshList()
         updateQueueLabel()

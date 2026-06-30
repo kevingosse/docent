@@ -365,7 +365,7 @@ class DocentReviewController(private val project: Project) {
     }
 
     companion object {
-        const val TOOL_WINDOW_ID = "Docent"
+        const val TOOL_WINDOW_ID = "Code Review Docent"
 
         /** Headline of the synthesized catch-all section ([appendOtherChangesSection]); shared so a dimmed hunk
          *  this section claims is labelled "Other changes" rather than "Section N · …". */
