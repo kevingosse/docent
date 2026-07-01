@@ -271,6 +271,10 @@ data class AgentSessionInfo(
     val provider: String,
     /** Epoch millis the session was last active, for ordering/display. */
     val updatedAt: Long,
+    /** Whether the Docent can deliver to this session *right now* — its open-tab terminal is live, or it's in
+     *  the persisted store (launcher-reachable). False for a chat tab that hasn't been activated this IDE run:
+     *  its terminal isn't built and we won't type into a booting one, so the UI asks the user to activate it. */
+    val reachable: Boolean = true,
 )
 
 /**
@@ -316,8 +320,11 @@ data class QueuedChange(val summary: String, val file: String, val line: Int, va
  * go through the [EventLog]/await channels: waking an *idle* agent the human picked in "Connect agent…" to
  * start a review (a `REVIEW_RESUMED` event — there's no other way to reach a session that isn't in a turn).
  * Ongoing actions then flow through the agent's file watch, not here. Implemented by the optional AWB module
- * (`awb/DocentEventNotifier`); kept as a plain interface so the core stays platform-clean. Returns true if the
- * event was accepted for delivery.
+ * (`awb/DocentEventNotifier`); kept as a plain interface so the core stays platform-clean.
+ *
+ * Returns true if the event was delivered. It only reaches a session that's reachable *right now* — a live
+ * open-tab terminal or one in the persisted store; it will NOT wake a cold chat tab (never activated this IDE
+ * run), so the UI marks those unreachable ([AgentSessionInfo.reachable]) and asks the user to activate them.
  */
 interface EventNotifier {
     fun notifyAgent(event: ReviewEvent): Boolean

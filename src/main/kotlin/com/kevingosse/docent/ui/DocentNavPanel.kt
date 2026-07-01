@@ -6,13 +6,14 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.util.concurrency.AppExecutorUtil
+import java.util.concurrent.TimeUnit
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
-import com.intellij.ui.SimpleListCellRenderer
-import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -30,7 +31,6 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
-import java.awt.Point
 import java.awt.Dimension
 import java.awt.Rectangle
 import java.awt.event.ComponentAdapter
@@ -92,6 +92,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
      *  implementing N changes…"). Cleared once a new trail loads or new decisions are recorded. */
     private var completionNote: String? = null
 
+    /** Whether the mid-review "Connect a different agent" choices are expanded (collapsed by default so the
+     *  Complete-review action stays the focus). Only used while connected; the not-connected state always shows
+     *  the choices inline. */
+    private var showConnectChoices = false
+
     init {
         add(subject, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
@@ -113,7 +118,34 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // Live-refresh the "ready for review" empty state as the agent records decisions off-EDT (its scratchpad
         // grows). Only matters when no trail is loaded — that's the surface that lists sessions + pending counts.
         DecisionLog.getInstance(project).onUpdated = { scheduleRefresh(onlyIfNoTrail = true) }
+        // React to chat-tab activation: activating a tab builds its terminal, which flips a session from inactive
+        // to reachable — refresh the connect/session lists so it moves to the active group without a manual reopen.
+        project.messageBus.connect(this).subscribe(
+            FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            object : FileEditorManagerListener {
+                override fun selectionChanged(event: FileEditorManagerEvent) = onEditorSelectionChanged()
+            },
+        )
         rebuild()
+    }
+
+    /** A chat tab was (de)selected/opened. If the session lists are on screen, refresh so reachability updates —
+     *  the terminal builds slightly after the tab is shown, so re-check once more after a short settle. */
+    private fun onEditorSelectionChanged() {
+        if (!sessionsVisible()) return
+        scheduleRefresh()
+        AppExecutorUtil.getAppScheduledExecutorService().schedule(
+            { ApplicationManager.getApplication().invokeLater({ if (sessionsVisible()) refreshList() }, ModalityState.any()) },
+            500,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    /** Whether the surface currently shows the workbench session lists (so tab-activation changes are worth a
+     *  refresh): the no-trail launcher, an unconnected loaded trail, or the expanded connect picker. */
+    private fun sessionsVisible(): Boolean {
+        val service = DocentReviewService.getInstance(project)
+        return controller.trail == null || !service.reviewActive || showConnectChoices
     }
 
     override fun onModelChanged() = rebuild()
@@ -227,7 +259,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 if (others.isNotEmpty()) planList.add(sectionHeader("Other sessions"))
                 others.sortedByDescending { counts[it.threadId] ?: 0 }
                     .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-                planList.add(startFreshLink())
+                newSessionRows { p, l -> startFreshSessionWith(p, l) }.forEach { planList.add(it) }
                 planList.add(loadTrailLink())
             }
             return
@@ -238,7 +270,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         planList.add(sectionHeader("Sessions"))
         sessions.sortedByDescending { counts[it.threadId] ?: 0 }
             .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-        planList.add(startFreshLink())
+        newSessionRows { p, l -> startFreshSessionWith(p, l) }.forEach { planList.add(it) }
         planList.add(loadTrailLink())
     }
 
@@ -264,27 +296,87 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /**
      * The connection status + review actions, appended inline to the bottom of the plan rail (DESIGN: everything
-     * inline — no fixed bottom button bar competing with the content). The primary action is emphasized as a card
-     * and depends on the state: mid-review the normal action is to **complete** it; before an agent is connected
-     * it's to **connect** one. Secondary paths stay as plain links. "Load a different trail" is hidden mid-review
-     * — swapping the trail out from under a live review makes no sense.
+     * inline — no popups, no fixed bottom button bar). Mid-review the primary action is a **Complete review** card
+     * with the agent picker tucked behind a collapsed "Connect a different agent" toggle; before an agent is
+     * connected, connecting *is* the task, so the agent choices render inline directly. "Load a different trail" is
+     * hidden mid-review — swapping the trail out from under a live review makes no sense.
      */
     private fun buildReviewFooter() {
         val service = DocentReviewService.getInstance(project)
         planList.add(divider())
         val connected = service.reviewActive
-        planList.add(statusRow(
-            if (connected) "● ${linkedTitle?.let { "Connected: $it" } ?: "Agent connected"}" else "○ Not connected",
-            connected,
-        ))
+        val statusText =
+            if (connected) "● ${linkedTitle?.let { "Connected: ${cropTitle(it)}" } ?: "Agent connected"}" else "○ Not connected"
+        planList.add(statusRow(statusText, connected))
+
         if (connected) {
             val n = service.queuedChanges().size
             val subtitle = if (n == 0) "No changes queued" else "$n ${changes(n)} queued"
             planList.add(primaryCard("Complete review", subtitle, AllIcons.Actions.Checked, "Finish the review") { completeReview() })
-            planList.add(actionLinkRow("Connect a different agent…") { connectAgent(it) })
+        }
+
+        // One bordered card that expands in place: collapsed it's a "Connect an agent" trigger, expanded it holds
+        // the choices with a close ✕ — same box either way (no popup, no jarring layout swap).
+        planList.add(connectPanel(connected))
+
+        if (!connected) planList.add(actionLinkRow("Load a different trail…") { loadTrail() })
+    }
+
+    /**
+     * The connect UI as a single bordered card. Collapsed: a clickable "Connect an agent" title that expands it.
+     * Expanded: the same card, now holding a header row (title + close ✕) and the inline choices. Green-bordered
+     * (primary) when no agent is connected yet, neutral (secondary) mid-review beside the Complete-review card.
+     */
+    private fun connectPanel(connected: Boolean): JComponent {
+        val title = if (connected) "Connect a different agent" else "Connect an agent"
+        val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        // Max height must track the *laid-out* preferred height: the expanded card holds wrapping message labels
+        // whose height isn't known until they have a width, so a fixed max (computed at build time) clips them.
+        val card = object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
+            border = cardBorder(if (connected) JBColor.border() else START_BORDER)
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(content, BorderLayout.CENTER)
+        }
+        if (showConnectChoices) {
+            content.add(connectHeaderRow(title))
+            buildConnectChoicesInto(content)
         } else {
-            planList.add(primaryCard("Connect an agent…", null, AllIcons.Actions.Execute, "Connect an agent to this trail") { connectAgent(it) })
-            planList.add(actionLinkRow("Load a different trail…") { loadTrail() })
+            val icon = AllIcons.Actions.Execute
+            content.add(JBLabel(wrapHtml("<b>${escapeHtml(title)}</b>", icon.iconWidth + JBUI.scale(40))).apply {
+                this.icon = icon
+                iconTextGap = JBUI.scale(6)
+                alignmentX = Component.LEFT_ALIGNMENT
+            })
+            card.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            card.toolTipText = "Connect an agent to this trail"
+            installClick(card) { showConnectChoices = true; refreshList() }
+            installHover(card)
+        }
+        return card
+    }
+
+    /** The expanded connect card's header: bold title on the left, a close ✕ on the right that collapses it. */
+    private fun connectHeaderRow(title: String): JComponent {
+        val close = JBLabel(AllIcons.Actions.CloseHovered).apply {
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            toolTipText = "Close"
+            border = JBUI.Borders.emptyLeft(8)
+        }
+        installClick(close) { showConnectChoices = false; refreshList() }
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(6)
+            add(JBLabel(wrapHtml("<b>${escapeHtml(title)}</b>")), BorderLayout.CENTER)
+            add(close, BorderLayout.EAST)
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
         }
     }
 
@@ -292,8 +384,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /** The railroaded primary action: a bordered, clickable card leading the reviewer into the likely session. */
     private fun primaryStartRow(s: AgentSessionInfo, pending: Int): JComponent {
-        val title = "Start reviewing in “${s.title.ifBlank { "(untitled session)" }}”"
+        val title = "Start reviewing in “${cropTitle(s.title)}”"
         val subParts = buildList {
+            if (!s.reachable) add("inactive — open its tab first")
             if (pending > 0) add("$pending ${decisions(pending)}")
             relativeTime(s.updatedAt).takeIf { it.isNotEmpty() }?.let { add(it) }
         }
@@ -303,10 +396,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /**
      * A bordered, clickable card for the *primary* action of a surface — visually louder than the plain
-     * [actionLinkRow] links around it, so the reviewer's eye lands on the one normal next step. [action] receives
-     * the card itself, so a popup (e.g. the agent chooser) can anchor to it.
+     * [actionLinkRow] links around it, so the reviewer's eye lands on the one normal next step.
      */
-    private fun primaryCard(title: String, subtitle: String?, icon: Icon, tooltip: String?, action: (JComponent) -> Unit): JComponent {
+    private fun primaryCard(title: String, subtitle: String?, icon: Icon, tooltip: String?, action: () -> Unit): JComponent {
         val titleLabel = JBLabel(wrapHtml("<b>${escapeHtml(title)}</b>", icon.iconWidth + JBUI.scale(30))).apply {
             this.icon = icon
             iconTextGap = JBUI.scale(6)
@@ -325,30 +417,39 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             })
         }
         val card = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.compound(JBUI.Borders.customLine(START_BORDER), JBUI.Borders.empty(8, 10))
+            border = cardBorder(START_BORDER)
             isOpaque = false
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             alignmentX = Component.LEFT_ALIGNMENT
             add(content, BorderLayout.CENTER)
             if (tooltip != null) toolTipText = tooltip
         }
-        installClick(card) { action(card) }
+        installClick(card) { action() }
         installHover(card)
         card.maximumSize = Dimension(Int.MAX_VALUE, card.preferredSize.height)
         return card
     }
 
+    /** Border for the emphasized cards: an [accent] line box with inner padding, plus an outer margin so the card
+     *  isn't flush against the rail edges. */
+    private fun cardBorder(accent: Color) = JBUI.Borders.compound(
+        JBUI.Borders.empty(4, 8),
+        JBUI.Borders.compound(JBUI.Borders.customLine(accent), JBUI.Borders.empty(8, 10)),
+    )
+
     /** A de-emphasized alternative session row: pick this one instead. Clicking starts the review on it. */
     private fun alternativeSessionRow(s: AgentSessionInfo, pending: Int): JComponent {
-        val title = escapeHtml(s.title.ifBlank { "(untitled session)" })
+        val title = escapeHtml(cropTitle(s.title))
         val parts = buildList {
+            if (!s.reachable) add("inactive")
             if (pending > 0) add("$pending pending")
             relativeTime(s.updatedAt).takeIf { it.isNotEmpty() }?.let { add(it) }
         }
         val suffix = if (parts.isEmpty()) "" else
             "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;" + parts.joinToString("&nbsp;·&nbsp;") { escapeHtml(it) } + "</font>"
         val label = JBLabel(wrapHtml("&#x25B8;&nbsp;&nbsp;$title$suffix")).apply {
-            toolTipText = "Start the Docent review on this session"
+            toolTipText = if (s.reachable) "Start the Docent review on this session"
+            else "Open this session's tab to activate it, then start the review"
         }
         return clickableRow(label, false, JBUI.Borders.empty(4, 10)) { sendStartReview(s) }
     }
@@ -362,12 +463,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun loadTrailLink(): JComponent = actionLinkRow("Load a saved trail…") { loadTrail() }
 
-    private fun startFreshLink(): JComponent = actionLinkRow("Start a fresh agent session…") { startFreshSession(it) }
-
-    /** A left-aligned inline link row (replaces the old bottom buttons). The action receives the link component
-     *  itself, so a popup can anchor to it. */
-    private fun actionLinkRow(text: String, action: (JComponent) -> Unit): JComponent =
-        ActionLink(text) { e -> action(e.source as JComponent) }.apply {
+    /** A left-aligned inline link row (replaces the old bottom buttons). */
+    private fun actionLinkRow(text: String, action: () -> Unit): JComponent =
+        ActionLink(text) { action() }.apply {
             alignmentX = Component.LEFT_ALIGNMENT
             border = JBUI.Borders.empty(5, 10)
             maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
@@ -404,10 +502,12 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
 
     /** JBTextArea wraps during painting, but BoxLayout asks preferred height before assigning final width.
-     *  Size it to the current list width first so the message gets enough height and no horizontal clipping. */
-    private class WrappingMessageArea(text: String) : JBTextArea(text) {
+     *  Size it to the current list width first so the message gets enough height and no horizontal clipping.
+     *  [widthProvider] supplies that width when [parent] can't (e.g. nested in a card whose content panel has
+     *  no laid-out width yet at measure time) — see [cardMessageLabel]. */
+    private class WrappingMessageArea(text: String, private val widthProvider: (() -> Int)? = null) : JBTextArea(text) {
         override fun getPreferredSize(): Dimension {
-            val available = parent?.width?.takeIf { it > 0 } ?: width
+            val available = widthProvider?.invoke()?.takeIf { it > 0 } ?: parent?.width?.takeIf { it > 0 } ?: width
             if (available > 0) setSize(available, Short.MAX_VALUE.toInt())
             return super.getPreferredSize().apply { if (available > 0) width = available }
         }
@@ -533,45 +633,81 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     /**
-     * Connect the loaded trail to a live agent: list the workbench's active Claude sessions and let the user pick
-     * one. Linking pins it as the push target ([DocentReviewService.linkAgentSession]) and sends it a "resume"
-     * message so it reads the trail and takes over as the Docent. This is the UI half of resuming a review (the
-     * agent half is the docent_resume_review MCP tool). [anchor] is the link the popup opens above.
+     * The inline "connect the loaded trail to an agent" choices (no popup — everything renders in the rail): a
+     * "start a new session" row per launchable provider, then each live workbench session. Picking a session pins
+     * it as the push target and sends the resume hand-off ([linkTo]); picking a provider launches a fresh session
+     * that resumes the trail itself ([startNewSession]). This is the UI half of resuming a review (the agent half
+     * is docent_resume_review).
      */
-    private fun connectAgent(anchor: JComponent) {
+    private fun buildConnectChoicesInto(target: JPanel) {
         val service = DocentReviewService.getInstance(project)
-        if (controller.trail == null) {
-            Messages.showInfoMessage(project, "Load a trail first, then connect an agent to it.", "Connect Agent")
-            return
-        }
-        val canLaunch = service.sessionLauncher != null
+        newSessionRows { provider, label -> startNewSession(provider, label) }.forEach { target.add(it) }
         val sessions = service.sessionDirectory?.listSessions().orEmpty()
-        if (!canLaunch && sessions.isEmpty()) {
-            Messages.showInfoMessage(
-                project,
-                "Agent Workbench isn't available. Start a workbench Claude session, or resume from the agent side " +
-                    "with the docent_resume_review tool.",
-                "Connect Agent",
-            )
+        if (sessions.isEmpty()) {
+            target.add(cardMessageLabel(
+                if (service.sessionLauncher != null) "No open agent sessions to connect — start a new one above."
+                else "Agent Workbench isn't available. Open a workbench session, or resume from the agent with " +
+                    "docent_resume_review.",
+            ))
             return
         }
-        // "Start a new agent session" first (the reliable path for a not-yet-started session — which has no id to
-        // target), then the existing started sessions.
-        val choices = buildList {
-            if (canLaunch) NEW_SESSION_PROVIDERS.forEach { (value, label) -> add(ConnectChoice.StartNew(value, label)) }
-            sessions.forEach { add(ConnectChoice.Existing(it)) }
+        // Reachable sessions connect directly; inactive ones are grouped under a message (their terminal isn't up),
+        // and move into the active list on their own once their tab is activated (see [onEditorSelectionChanged]).
+        val (active, inactive) = sessions.partition { it.reachable }
+        active.forEach { target.add(connectSessionRow(it)) }
+        if (inactive.isNotEmpty()) {
+            target.add(sectionHeader("Not active yet"))
+            target.add(cardMessageLabel("Click a session's tab in the editor to start it — it'll move up here once active."))
+            inactive.forEach { target.add(connectSessionRow(it)) }
         }
-        val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(choices)
-            .setTitle("Connect Agent")
-            .setRenderer(@Suppress("DEPRECATION") SimpleListCellRenderer.create("") { choiceLabel(it) })
-            .setNamerForFiltering { choiceFilter(it) } // type to filter
-            .setVisibleRowCount(12) // cap height so the popup doesn't fill the screen
-            .setItemChosenCallback { onChoice(it) }
-            .createPopup()
-        // The link sits near the bottom of the tool window, so show the popup ABOVE it rather than below.
-        val height = popup.content.preferredSize.height
-        popup.show(RelativePoint(anchor, Point(0, -height)))
+    }
+
+    /** A wrapping gray message for use *inside* the connect card — same [WrappingMessageArea] as [messageLabel],
+     *  but fed the card's interior width via a provider, since its parent (the card's content panel) has no
+     *  laid-out width at measure time (which is what made a plain [messageLabel] clip here). */
+    private fun cardMessageLabel(text: String): JComponent =
+        WrappingMessageArea(text) { cardContentWidth() }.apply {
+            isEditable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            border = JBUI.Borders.empty(6, 4)
+            foreground = JBColor.GRAY
+            font = UIUtil.getLabelFont()
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+    /** The connect card's interior width (what its content panel gets once laid out): the live viewport width
+     *  (excludes any scrollbar) minus the card's outer margin + border + padding, with a little slack. Falls back
+     *  to the tracked rail width before the viewport is laid out. */
+    private fun cardContentWidth(): Int {
+        val vp = scrollPane.viewport.width
+        val base = if (vp > JBUI.scale(80)) vp else contentWidth + JBUI.scale(24)
+        return (base - JBUI.scale(40)).coerceAtLeast(JBUI.scale(120))
+    }
+
+    /** A live-session row in the connect list; clicking connects the Docent to it (or, if inactive, guides the
+     *  reviewer to activate its tab first). Inactive rows are dimmed and grouped by the caller. */
+    private fun connectSessionRow(s: AgentSessionInfo): JComponent {
+        val title = escapeHtml(cropTitle(s.title))
+        val age = relativeTime(s.updatedAt)
+        val suffix = if (age.isEmpty()) "" else "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;${escapeHtml(age)}</font>"
+        val label = JBLabel(wrapHtml("&#x25B8;&nbsp;&nbsp;$title$suffix")).apply {
+            if (!s.reachable) foreground = JBColor.GRAY
+            toolTipText = if (s.reachable) "Connect the Docent to this session"
+            else "Open this session's tab to activate it, then connect"
+        }
+        return clickableRow(label, false, JBUI.Borders.empty(4, 10)) { linkTo(s) }
+    }
+
+    /** A "✦ Start a new <provider> session" row per launchable provider (empty when the workbench can't launch).
+     *  [onPick] gets the provider value + label. */
+    private fun newSessionRows(onPick: (String, String) -> Unit): List<JComponent> {
+        if (DocentReviewService.getInstance(project).sessionLauncher == null) return emptyList()
+        return NEW_SESSION_PROVIDERS.map { (value, label) ->
+            val row = JBLabel(wrapHtml("&#x2726;&nbsp;&nbsp;Start a new $label session"))
+            clickableRow(row, false, JBUI.Borders.empty(4, 10)) { onPick(value, label) }
+        }
     }
 
     /** Ask [picked] to finalize and open the review now (clicked from the no-trail surface). No review is armed
@@ -580,6 +716,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
      *  trail loads here. */
     private fun sendStartReview(picked: AgentSessionInfo) {
         val service = DocentReviewService.getInstance(project)
+        // A cold chat tab can't be reached now (see [showActivateFirst]); guide the reviewer instead of no-op'ing.
+        if (!picked.reachable) return showActivateFirst(picked)
         linkedTitle = picked.title
         service.agentProvider = picked.provider
         service.deliveryMode = deliveryModeForProvider(picked.provider)
@@ -588,7 +726,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             ReviewEvent(id = "", kind = DocentReviewService.START_REVIEW),
         ) ?: false
         if (pushed) {
-            awaitingStartFrom = picked.title.ifBlank { "the agent" }
+            awaitingStartFrom = cropTitle(picked.title.ifBlank { "the agent" })
             refreshList()
         } else {
             Messages.showInfoMessage(
@@ -605,10 +743,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * fresh session can still call docent_finalize_trail, which consumes the project-wide decision log. [anchor]
      * is the link the provider chooser opens above.
      */
-    private fun startFreshSession(anchor: JComponent) {
-        val service = DocentReviewService.getInstance(project)
-        val launcher = service.sessionLauncher
-        if (launcher == null) {
+    /** Launch a fresh agent session (of [provider]) that builds the review from the recorded decisions — the
+     *  no-trail "start a new session" path. A fresh session can still call docent_finalize_trail, which consumes
+     *  the project-wide decision log. */
+    private fun startFreshSessionWith(provider: String, label: String) {
+        val launcher = DocentReviewService.getInstance(project).sessionLauncher ?: run {
             Messages.showInfoMessage(
                 project,
                 "Agent Workbench isn't available. Start a session there, then it'll appear here to review.",
@@ -618,42 +757,15 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
         val prompt = "Please start the Code Review Docent review: call docent_finalize_trail now to synthesize the " +
             "trail from the recorded decisions and open the walkthrough in the review UI."
-        val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(NEW_SESSION_PROVIDERS)
-            .setTitle("Start a Fresh Session")
-            .setRenderer(@Suppress("DEPRECATION") SimpleListCellRenderer.create("") { "✦  Start a new ${it.second} session" })
-            .setNamerForFiltering { "start new ${it.second} agent session" }
-            .setItemChosenCallback { (value, label) ->
-                if (launcher.startSession(prompt, value)) {
-                    awaitingStartFrom = "a new $label session"
-                    refreshList()
-                } else {
-                    Messages.showInfoMessage(
-                        project,
-                        "Couldn't start a new $label session. Start one from the Agent Workbench instead.",
-                        "Start Review",
-                    )
-                }
-            }
-            .createPopup()
-        val height = popup.content.preferredSize.height
-        popup.show(RelativePoint(anchor, Point(0, -height)))
-    }
-
-    private fun choiceLabel(c: ConnectChoice): String = when (c) {
-        is ConnectChoice.StartNew -> "✦  Start a new ${c.label} session"
-        is ConnectChoice.Existing -> sessionLabel(c.info)
-    }
-
-    private fun choiceFilter(c: ConnectChoice): String = when (c) {
-        is ConnectChoice.StartNew -> "start new ${c.label} agent session"
-        is ConnectChoice.Existing -> c.info.title
-    }
-
-    private fun onChoice(c: ConnectChoice) {
-        when (c) {
-            is ConnectChoice.StartNew -> startNewSession(c.provider, c.label)
-            is ConnectChoice.Existing -> linkTo(c.info)
+        if (launcher.startSession(prompt, provider)) {
+            awaitingStartFrom = "a new $label session"
+            refreshList()
+        } else {
+            Messages.showInfoMessage(
+                project,
+                "Couldn't start a new $label session. Start one from the Agent Workbench instead.",
+                "Start Review",
+            )
         }
     }
 
@@ -692,24 +804,41 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // stale if other sessions launched since): Claude → Monitor (watch the EventLog), Codex → await (block).
         service.agentProvider = picked.provider
         service.deliveryMode = deliveryModeForProvider(picked.provider)
-        service.linkAgentSession(picked.threadId)
-        // Hand the agent its role + the trail to read. Best-effort: a missing/failed notifier just means the
-        // agent must catch up via docent_await_event; the review is armed either way.
-        service.eventNotifier?.notifyAgent(
+        // A cold chat tab (never opened this IDE run) has no live terminal and we won't type into a booting one,
+        // so it's unreachable now — don't arm a dead connection; tell the reviewer to activate it first.
+        if (!picked.reachable) return showActivateFirst(picked)
+        service.linkAgentSession(picked.threadId) // arms the loop + begins the event log the resume prompt references
+        // The resume push is the ONLY way to wake an idle session and tell it it's the Docent — unlike ongoing
+        // actions, there's no watched log for it to catch up on. If it doesn't land, the agent isn't listening:
+        // roll the arm back rather than show a false "connected".
+        val delivered = service.eventNotifier?.notifyAgent(
             ReviewEvent(
                 id = "",
                 kind = DocentReviewService.REVIEW_RESUMED,
                 file = service.trailPath ?: "",
                 text = controller.trail?.subject ?: "",
             ),
-        )
+        ) ?: false
+        if (delivered) showConnectChoices = false // collapse the picker; we're connected now
+        else {
+            service.reset() // clears reviewActive + the just-begun event log; the trail stays loaded
+            linkedTitle = null
+            showActivateFirst(picked)
+        }
         refreshList()
     }
 
-    private fun sessionLabel(s: AgentSessionInfo): String {
-        val title = s.title.ifBlank { "(untitled session)" }.let { if (it.length > 60) it.take(57) + "…" else it }
-        val age = relativeTime(s.updatedAt)
-        return if (age.isEmpty()) title else "$title   ·   $age"
+    /** The picked session can't be reached right now (a chat tab that hasn't been activated this IDE run). Tell
+     *  the reviewer to activate it first — we deliberately don't type into a still-booting terminal. */
+    private fun showActivateFirst(picked: AgentSessionInfo) {
+        linkedTitle = null
+        Messages.showInfoMessage(
+            project,
+            "“${cropTitle(picked.title)}” isn't active yet. Click its tab in the editor to open the session " +
+                "(its terminal starts then), and try connecting again — or ask that agent to run docent_resume_review.",
+            "Activate the Session First",
+        )
+        refreshList()
     }
 
     private fun relativeTime(epochMillis: Long): String {
@@ -747,16 +876,21 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun escapeHtml(s: String) =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    /** Crop a session title for display with a **middle** ellipsis (like the workbench chat tabs), keeping the
+     *  head and tail that disambiguate — long agent-authored titles are otherwise unreadable in the rail, the
+     *  picker, and dialogs. Blank → a placeholder. Apply before [escapeHtml] for HTML labels. */
+    private fun cropTitle(s: String, max: Int = 40): String {
+        val t = s.ifBlank { "(untitled session)" }
+        if (t.length <= max) return t
+        val head = (max - 1) / 2
+        val tail = max - 1 - head
+        return t.take(head).trimEnd() + "…" + t.takeLast(tail).trimStart()
+    }
+
     override fun dispose() {
         controller.removeListener(this)
         DocentReviewService.getInstance(project).onChangesUpdated = null
         DecisionLog.getInstance(project).onUpdated = null
-    }
-
-    /** An entry in the "Connect agent" picker: start a fresh session of [provider], or connect an existing one. */
-    private sealed interface ConnectChoice {
-        data class StartNew(val provider: String, val label: String) : ConnectChoice
-        data class Existing(val info: AgentSessionInfo) : ConnectChoice
     }
 
     private companion object {

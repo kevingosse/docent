@@ -25,10 +25,12 @@ import com.kevingosse.docent.ReviewEvent
  * the [DocentReviewService.agentThreadId] captured at link time is the thread we target.
  *
  * Two delivery channels, tried in order ([notifyAgent]):
- *  1. **Open chat-tab terminal** ([sendViaOpenTabTerminal]) — type the prompt into the session's live terminal,
- *     the same path the workbench's own file-drop / initial-message dispatch use. This is the ONLY channel that
- *     works when the persisted session store is empty (the .slnx listing bug), and it covers the common case
- *     where the picked session is an open tab.
+ *  1. **Live open chat-tab terminal** ([sendViaLiveTerminal]) — type the prompt into the session's terminal, the
+ *     same path the workbench's own file-drop / initial-message dispatch use. Only works when the tab's terminal
+ *     is already built (the tab has been activated at least once this IDE run) — we deliberately do NOT activate a
+ *     cold tab and type into a still-booting terminal, which races and can type-without-submitting; those sessions
+ *     are reported unreachable ([WorkbenchSessionDirectory] flags them) so the UI asks the user to activate first.
+ *     This is the only channel that works when the persisted store is empty (the .slnx listing bug).
  *  2. **Prompt-launcher bridge** ([AgentPromptLaunchers] with `targetThreadId`) — the supported "send to an
  *     existing session" API, but it resolves the target from the persisted store, so it only reaches idle/closed
  *     sessions and fails `TARGET_THREAD_NOT_FOUND` for .slnx solutions whose store has no threads.
@@ -48,40 +50,13 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
             }
             val prompt = buildPrompt(event)
 
-            // Primary channel: type the prompt into the session's OPEN chat-tab terminal (how the workbench's own
-            // file-drop / initial-message dispatch deliver). This is the only thing that works when the persisted
-            // session store is empty — the .slnx listing bug — where the launcher below fails TARGET_THREAD_NOT_FOUND.
-            if (sendViaOpenTabTerminal(threadId, prompt)) return true
+            // Primary channel: type the prompt into the session's LIVE open chat-tab terminal. Only if it's already
+            // built — we don't activate a cold tab and type into a booting terminal (brittle; can type without
+            // submitting). Cold tabs are reported unreachable so the UI tells the user to activate them first.
+            if (sendViaLiveTerminal(threadId, prompt)) return true
 
-            // Fallback for an idle/closed session (no open tab): the supported prompt-launcher push. The workbench
-            // resolves the target by finding the thread UNDER the request's project path (case/separator-sensitive),
-            // and a thread may live under the dedicated chat-frame project, so pass the path the store records for it.
-            val projectPath = ownerProjectPath(threadId)
-                ?: service.agentProjectPath?.takeIf { it.isNotBlank() }
-                ?: project.basePath
-                ?: return false
-
-            val bridge = AgentPromptLaunchers.find() ?: run {
-                LOG.info("Docent: no prompt-launcher bridge; falling back to the poll path")
-                return false
-            }
-
-            val result = bridge.launch(
-                AgentPromptLaunchRequest(
-                    provider = providerOf(service.agentProvider),
-                    projectPath = projectPath,
-                    launchMode = AgentSessionLaunchMode.STANDARD,
-                    initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt, projectPath = projectPath),
-                    targetThreadId = threadId,
-                ),
-            )
-            if (!result.launched) {
-                LOG.info(
-                    "Docent: push to thread $threadId (project=$projectPath) not delivered (${result.error}); " +
-                        "falling back to the poll path. Known store paths: ${storeProjectPaths()}",
-                )
-            }
-            result.launched
+            // Fallback for an idle/closed session in the persisted store: the supported prompt-launcher push.
+            pushViaLauncher(service, threadId, prompt)
         } catch (t: Throwable) {
             LOG.warn("Docent: failed to push a review event to the agent; falling back to the poll path", t)
             false
@@ -89,23 +64,54 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
     }
 
     /**
-     * Deliver [prompt] straight to the agent by typing it into its OPEN chat tab's terminal — the same
-     * mechanism the workbench's own file-drop / initial-message dispatch use (`AgentChatFileEditor.tab.sendText`).
-     * This is the only working channel when the persisted session store is empty (the .slnx listing bug), where
-     * [AgentPromptLaunchers] fails with TARGET_THREAD_NOT_FOUND. Everything here is `@Internal`, so the editor's
-     * terminal tab is reached by reflection; any miss returns false and the caller falls back to the launcher.
+     * Fallback for a session with no reachable open-tab terminal: the supported prompt-launcher push. The
+     * workbench resolves the target by finding the thread UNDER the request's project path (case/separator-
+     * sensitive), and a thread may live under the dedicated chat-frame project, so pass the path the store
+     * records for it. Returns true if the launch was accepted.
      */
-    private fun sendViaOpenTabTerminal(threadId: String, prompt: String): Boolean {
+    private fun pushViaLauncher(service: DocentReviewService, threadId: String, prompt: String): Boolean {
+        val projectPath = ownerProjectPath(threadId)
+            ?: service.agentProjectPath?.takeIf { it.isNotBlank() }
+            ?: project.basePath
+            ?: return false
+        val bridge = AgentPromptLaunchers.find() ?: run {
+            LOG.info("Docent: no prompt-launcher bridge; falling back to the poll path")
+            return false
+        }
+        val result = bridge.launch(
+            AgentPromptLaunchRequest(
+                provider = providerOf(service.agentProvider),
+                projectPath = projectPath,
+                launchMode = AgentSessionLaunchMode.STANDARD,
+                initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt, projectPath = projectPath),
+                targetThreadId = threadId,
+            ),
+        )
+        if (!result.launched) {
+            LOG.info(
+                "Docent: push to thread $threadId (project=$projectPath) not delivered (${result.error}); " +
+                    "falling back to the poll path. Known store paths: ${storeProjectPaths()}",
+            )
+        }
+        return result.launched
+    }
+
+    /**
+     * Deliver [prompt] by typing it into the chat tab's ALREADY-LIVE terminal — the same mechanism the workbench's
+     * own file-drop / initial-message dispatch use (`AgentChatFileEditor.tab.sendText`). Returns false (caller
+     * falls back to the launcher) if the tab isn't open or its terminal isn't built yet; we don't activate + type
+     * into a booting terminal, which races and can type-without-submitting. Everything here is `@Internal`, so the
+     * terminal tab is reached by reflection.
+     */
+    private fun sendViaLiveTerminal(threadId: String, prompt: String): Boolean {
         return try {
             val (proj, vf) = findOpenChatTab(threadId) ?: return false
-            val editor = FileEditorManager.getInstance(proj).getEditors(vf)
-                .firstOrNull { it.javaClass.name == AGENT_CHAT_FILE_EDITOR_FQN } ?: return false
-            val tab = editor.javaClass.getDeclaredField("tab").apply { isAccessible = true }.get(editor) ?: run {
-                LOG.info("Docent: open chat tab for $threadId has no live terminal yet; trying the launcher")
+            val tab = terminalTabOf(proj, vf) ?: run {
+                LOG.info("Docent: chat tab for $threadId has no live terminal (not activated this run); trying the launcher")
                 return false
             }
-            // sendText(text, shouldExecute, useBracketedPasteMode) — execute it, bracketed-paste so multi-line is intact.
-            // setAccessible bypasses the language check: the method is public but its declaring class
+            // sendText(text, shouldExecute, useBracketedPasteMode) — execute it; bracketed-paste keeps multi-line
+            // intact. setAccessible bypasses the language check: the method is public but its declaring class
             // (ToolWindowAgentChatTerminalTab) is `internal`, so a plain invoke throws IllegalAccessException.
             val sendText = tab.javaClass.methods.firstOrNull { it.name == "sendText" && it.parameterCount == 3 } ?: return false
             sendText.isAccessible = true
@@ -117,6 +123,14 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
             false
         }
     }
+
+    /** The [AGENT_CHAT_FILE_EDITOR_FQN]'s lazily-created terminal `tab` (reflected), or null if it isn't built yet
+     *  (the tab was never activated this IDE run). */
+    private fun terminalTabOf(proj: Project, vf: VirtualFile): Any? = runCatching {
+        val editor = FileEditorManager.getInstance(proj).getEditors(vf)
+            .firstOrNull { it.javaClass.name == AGENT_CHAT_FILE_EDITOR_FQN } ?: return null
+        editor.javaClass.getDeclaredField("tab").apply { isAccessible = true }.get(editor)
+    }.getOrNull()
 
     /** The open AgentChatVirtualFile (and its project) whose thread/session id is [threadId], across all open
      *  projects (the workbench can host chats in a dedicated frame). Read reflectively — the type is `@Internal`. */
