@@ -364,6 +364,26 @@ class DocentReviewController(private val project: Project) {
         ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.hide()
     }
 
+    /**
+     * End the current review and return the UI to its initial (no-trail) state: drop the loaded trail and close
+     * the now-stale editor review tab, but leave the nav tool window open on the start-review surface (so the
+     * reviewer sees the review wrapped up and where the next one will appear). Must run on the EDT.
+     *
+     * Deliberately does NOT touch the agent loop — [DocentReviewService.completeReview] has already fired the
+     * REVIEW_COMPLETED event (in MONITOR mode it's persisted to the watched log; in AWAIT it's queued for the
+     * agent to drain), so tearing the queue/log down here could drop it before the agent reads it.
+     */
+    fun endReview() {
+        DocentReviewService.getInstance(project).trailPath = null
+        trail = null
+        loadError = null
+        currentSectionIndex = -1
+        currentFileIndex = 0
+        visited.clear()
+        FileEditorManager.getInstance(project).closeFile(OpenDocentReviewAction.getOrCreateFile(project))
+        listeners.forEach { it.onModelChanged() }
+    }
+
     companion object {
         const val TOOL_WINDOW_ID = "Code Review Docent"
 
