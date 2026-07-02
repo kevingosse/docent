@@ -11,6 +11,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import javax.swing.Icon
 
 /**
  * Per-project broker for the live review (docs/DESIGN.md §6 — "the agent-driven review loop").
@@ -322,6 +323,8 @@ data class AgentSessionInfo(
      *  the persisted store (launcher-reachable). False for a chat tab that hasn't been activated this IDE run:
      *  its terminal isn't built and we won't type into a booting one, so the UI asks the user to activate it. */
     val reachable: Boolean = true,
+    /** The provider's icon (Claude / Codex), for the session rows. Null when the workbench can't supply one. */
+    val icon: Icon? = null,
 )
 
 /**
@@ -334,17 +337,35 @@ interface AgentSessionDirectory {
 }
 
 /**
+ * One way to start a new agent session — a workbench **launch profile** (built-in per provider, plus any the
+ * user defined in the workbench's launch-profile settings), filtered to the providers the Docent can drive.
+ * Plain data here so the core stays platform-clean; the AWB module maps these back to real profiles.
+ */
+data class SessionLaunchOption(
+    /** The workbench launch-profile id (stable across list rebuilds); opaque to the core. */
+    val id: String,
+    /** The workbench's own menu label for this profile (e.g. "New Claude Code session", or the profile's name). */
+    val label: String,
+    /** The profile's `AgentSessionProvider.value` (e.g. "claude" / "codex"), for delivery-mode decisions. */
+    val provider: String,
+    /** The provider's icon, shown beside the label. */
+    val icon: Icon? = null,
+)
+
+/**
  * Starts a fresh agent session seeded with [initialPrompt], for the UI's "start a new session" option. Used to
  * resume a review when no suitable existing session is connectable (e.g. only a brand-new, not-yet-started tab
  * exists, which has no id to target). The launched agent is told to call `docent_resume_review`, which arms the
  * loop and pins the push target via its sessionToken — so the UI need not know the new session's id. Implemented
  * by the optional AWB module (`awb/WorkbenchAgentLauncher`). Returns true if the launch was accepted.
  *
- * [provider] is the `AgentSessionProvider.value` to launch (e.g. "claude" / "codex"); the launcher maps it back
- * to a workbench provider. The launch contributor then injects the right Docent protocol + delivery mode for it.
+ * [launchOptions] lists the ways a session can be launched — the workbench's launch profiles for the supported
+ * providers — and [startSession] launches one of them. The launch contributor then injects the right Docent
+ * protocol + delivery mode for the launched provider.
  */
 interface AgentSessionLauncher {
-    fun startSession(initialPrompt: String, provider: String): Boolean
+    fun launchOptions(): List<SessionLaunchOption>
+    fun startSession(initialPrompt: String, option: SessionLaunchOption): Boolean
 }
 
 /** One human action during the review, delivered to the authoring agent via `docent_await_event`. */

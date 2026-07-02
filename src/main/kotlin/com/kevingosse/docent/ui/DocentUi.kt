@@ -32,6 +32,7 @@ import javax.swing.border.Border
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
+import kotlin.math.ceil
 
 /**
  * The Docent's visual identity — the single source of truth for every review surface (docs/UI.md §3).
@@ -354,8 +355,8 @@ object DocentUi {
 
         override fun getPreferredSize(): Dimension {
             val available = widthProvider?.invoke()?.takeIf { it > 0 } ?: parent?.width?.takeIf { it > 0 } ?: width
-            if (available > 0) setSize(available, Short.MAX_VALUE.toInt())
-            return super.getPreferredSize().apply { if (available > 0) width = available }
+            if (available <= 0) return super.getPreferredSize()
+            return Dimension(available, wrappedTextHeight(this, available))
         }
 
         override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
@@ -385,12 +386,29 @@ object DocentUi {
         override fun getPreferredSize(): Dimension {
             val available = widthProvider().takeIf { it > JBUI.scale(20) }
                 ?: return super.getPreferredSize() // not laid out yet → unwrapped, corrected on the next pass
-            setSize(available, Short.MAX_VALUE.toInt())
-            return Dimension(available, super.getPreferredSize().height)
+            return Dimension(available, wrappedTextHeight(this, available))
         }
 
         override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
         override fun getAlignmentX(): Float = Component.LEFT_ALIGNMENT
+    }
+
+    /**
+     * The wrapped height of [c]'s text at [width], measured through the text **view** — NEVER via
+     * `setSize()` on the component. A `setSize()` inside a size getter fires `invalidate` +
+     * `componentResized` on every query (the forced huge measuring height always differs from the
+     * laid-out height), and size getters are queried on every layout pass — each validation pass
+     * re-invalidates, which schedules another pass: a self-sustaining layout/paint storm that pegged
+     * the EDT at ~80% for a whole session (diagnosed live 2026-07-02; user-visible as "Rider won't
+     * exit"). Sizing the root *view* re-wraps the text with zero component-level side effects — the
+     * UI's own paint path re-syncs the view to the real bounds before painting, so this is safe to
+     * call at any time on the EDT.
+     */
+    private fun wrappedTextHeight(c: javax.swing.text.JTextComponent, width: Int): Int {
+        val root = c.ui.getRootView(c)
+        root.setSize(width.toFloat(), Short.MAX_VALUE.toFloat())
+        val text = ceil(root.getPreferredSpan(javax.swing.text.View.Y_AXIS).toDouble()).toInt()
+        return text + c.insets.top + c.insets.bottom
     }
 
     /** An in-flow "the Docent is working" row: spinner + a mutable gray label (chat + comment cards). */

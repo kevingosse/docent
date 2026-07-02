@@ -1,6 +1,7 @@
 package com.kevingosse.docent.awb
 
 import com.intellij.platform.ai.agent.core.session.AgentSessionProvider
+import com.intellij.platform.ai.agent.sessions.core.providers.AgentSessionProviders
 import com.intellij.agent.workbench.sessions.state.AgentSessionsStateStore
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
@@ -52,7 +53,7 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
                 .firstOrNull { samePath(it.path, base) }?.threads.orEmpty()
                 .filter { !it.archived && it.provider in SUPPORTED_PROVIDERS }
                 .sortedByDescending { it.updatedAt }
-                .forEach { t -> if (seen.add(t.id)) result += AgentSessionInfo(t.id, t.title, t.provider.value, t.updatedAt, reachable = true) }
+                .forEach { t -> if (seen.add(t.id)) result += AgentSessionInfo(t.id, t.title, t.provider.value, t.updatedAt, reachable = true, icon = providerIcon(t.provider.value)) }
         }.onFailure { LOG.warn("Docent: couldn't read the workbench session store", it) }
 
         return result
@@ -107,12 +108,18 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
                     val pendingMs = runCatching { vf.javaClass.getMethod("getPendingCreatedAtMs").invoke(vf) as? Long }.getOrNull()
                     // Reachable now if its terminal is already built, or the thread is in the store (launcher push).
                     val reachable = terminalLive(p, vf) || id in storedIds
-                    out += AgentSessionInfo(id, title, provider, pendingMs ?: 0L, reachable)
+                    out += AgentSessionInfo(id, title, provider, pendingMs ?: 0L, reachable, icon = providerIcon(provider))
                 }
             }
         }
         return out
     }
+
+    /** The provider's list icon (desaturated variant for persistent surfaces, per the descriptor's contract). */
+    private fun providerIcon(provider: String): javax.swing.Icon? = runCatching {
+        SUPPORTED_PROVIDERS.firstOrNull { it.value == provider }
+            ?.let { AgentSessionProviders.find(it)?.monochromeIcon }
+    }.getOrNull()
 
     private fun invokeString(target: Any, method: String): String? =
         runCatching { target.javaClass.getMethod(method).invoke(target) as? String }.getOrNull()

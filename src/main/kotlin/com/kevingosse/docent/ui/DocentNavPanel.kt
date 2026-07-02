@@ -25,6 +25,7 @@ import com.kevingosse.docent.AgentSessionInfo
 import com.kevingosse.docent.DecisionLog
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.ReviewEvent
+import com.kevingosse.docent.SessionLaunchOption
 import com.kevingosse.docent.deliveryModeForProvider
 import com.kevingosse.docent.trail.Anchor
 import com.kevingosse.docent.trail.Section
@@ -118,6 +119,10 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
      *  Complete-review action stays the focus). Only used while connected; the not-connected state always shows
      *  the choices inline. */
     private var showConnectChoices = false
+
+    /** Whether the single "Start a new agent session" entry is expanded into its launch-profile choices
+     *  (collapsed by default — one row, not one per provider/profile). Collapses again after a pick. */
+    private var showLaunchChoices = false
 
     init {
         add(header, BorderLayout.NORTH)
@@ -322,7 +327,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 if (others.isNotEmpty()) planList.add(sectionHeader("Other sessions"))
                 others.sortedByDescending { counts[it.threadId] ?: 0 }
                     .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-                newSessionRows { p, l -> startFreshSessionWith(p, l) }.forEach { planList.add(it) }
+                newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
+                    .forEach { planList.add(it) }
                 planList.add(loadTrailLink())
             }
             return
@@ -333,7 +339,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         planList.add(sectionHeader("Sessions"))
         sessions.sortedByDescending { counts[it.threadId] ?: 0 }
             .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-        newSessionRows { p, l -> startFreshSessionWith(p, l) }.forEach { planList.add(it) }
+        newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
+            .forEach { planList.add(it) }
         planList.add(loadTrailLink())
     }
 
@@ -510,7 +517,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val suffix = if (parts.isEmpty()) "" else
             "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;" + parts.joinToString("&nbsp;·&nbsp;") { escapeHtml(it) } + "</font>"
         val label = iconTextRow(
-            null, "&#x25B8;&nbsp;&nbsp;$title$suffix", unscaledReserve = 28,
+            s.icon, if (s.icon != null) "$title$suffix" else "&#x25B8;&nbsp;&nbsp;$title$suffix",
+            unscaledReserve = if (s.icon != null) 34 else 28,
             tooltip = if (s.reachable) "Start the Docent review on this session"
             else "Open this session's tab to activate it, then start the review",
         )
@@ -677,29 +685,35 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     /**
-     * The inline "connect the loaded trail to an agent" choices (no popup — everything renders in the rail): a
-     * "start a new session" row per launchable provider, then each live workbench session. Picking a session pins
-     * it as the push target and sends the resume hand-off ([linkTo]); picking a provider launches a fresh session
-     * that resumes the trail itself ([startNewSession]). This is the UI half of resuming a review (the agent half
-     * is docent_resume_review).
+     * The inline "connect the loaded trail to an agent" choices (no popup — everything renders in the rail): each
+     * live workbench session first (the common case), then the expandable "or start a new session" entry
+     * (workbench launch profiles). Picking a session pins it as the push target and sends the resume hand-off
+     * ([linkTo]); picking a launch profile launches a fresh session that resumes the trail itself
+     * ([startNewSession]). This is the UI half of resuming a review (the agent half is docent_resume_review).
      */
     private fun buildConnectChoicesInto(target: JPanel) {
         val service = DocentReviewService.getInstance(project)
-        newSessionRows(widthOf = { cardContentWidth() }) { provider, label -> startNewSession(provider, label) }
-            .forEach { target.add(it) }
         val sessions = service.sessionDirectory?.listSessions().orEmpty()
-        if (sessions.isEmpty()) {
+        if (sessions.isEmpty() && service.sessionLauncher == null) {
             target.add(cardMessageLabel(
-                if (service.sessionLauncher != null) "No open agent sessions to connect — start a new one above."
-                else "Agent Workbench isn't available. Open a workbench session, or resume from the agent with " +
+                "Agent Workbench isn't available. Open a workbench session, or resume from the agent with " +
                     "docent_resume_review.",
             ))
             return
         }
-        // Reachable sessions connect directly; inactive ones are grouped under a message (their terminal isn't up),
-        // and move into the active list on their own once their tab is activated (see [onEditorSelectionChanged]).
+        // Connecting to an existing session is the common case, so those lead; the "start a new session" entry
+        // follows as the "or" path. Reachable sessions connect directly; inactive ones are grouped under a
+        // message at the bottom (their terminal isn't up), and move into the active list on their own once
+        // their tab is activated (see [onEditorSelectionChanged]).
         val (active, inactive) = sessions.partition { it.reachable }
         active.forEach { target.add(connectSessionRow(it)) }
+        if (sessions.isEmpty()) {
+            target.add(cardMessageLabel("No open agent sessions to connect — start a new one:"))
+        }
+        newSessionRows(
+            widthOf = { cardContentWidth() },
+            label = if (active.isEmpty()) "Start a new agent session" else "Or start a new agent session",
+        ) { startNewSession(it) }.forEach { target.add(it) }
         if (inactive.isNotEmpty()) {
             target.add(sectionHeader("Not active yet"))
             target.add(cardMessageLabel("Click a session's tab in the editor to start it — it'll move up here once active."))
@@ -732,9 +746,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val age = relativeTime(s.updatedAt)
         val suffix = if (age.isEmpty()) "" else "&nbsp;&nbsp;<font color=\"#808080\">·&nbsp;${escapeHtml(age)}</font>"
         val label = iconTextRow(
-            null, "&#x25B8;&nbsp;&nbsp;$title$suffix",
+            s.icon, if (s.icon != null) "$title$suffix" else "&#x25B8;&nbsp;&nbsp;$title$suffix",
             foreground = if (s.reachable) null else JBColor.GRAY,
-            unscaledReserve = 28,
+            unscaledReserve = if (s.icon != null) 34 else 28,
             tooltip = if (s.reachable) "Connect the Docent to this session"
             else "Open this session's tab to activate it, then connect",
             widthOf = { cardContentWidth() }, // these rows live inside the connect card, not the bare rail
@@ -742,15 +756,43 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         return clickableRow(label, false, JBUI.Borders.empty(4, 10)) { linkTo(s) }
     }
 
-    /** A "✦ Start a new <provider> session" row per launchable provider (empty when the workbench can't launch).
-     *  [onPick] gets the provider value + label; [widthOf] is the host surface's live width (the rail by
-     *  default; the connect card's interior when nested there). */
-    private fun newSessionRows(widthOf: () -> Int = { planList.width }, onPick: (String, String) -> Unit): List<JComponent> {
-        if (DocentReviewService.getInstance(project).sessionLauncher == null) return emptyList()
-        return NEW_SESSION_PROVIDERS.map { (value, label) ->
-            val row = iconTextRow(null, "&#x2726;&nbsp;&nbsp;Start a new $label session", unscaledReserve = 28, widthOf = widthOf)
-            clickableRow(row, false, JBUI.Borders.empty(4, 10)) { onPick(value, label) }
+    /** The "✦ Start a new agent session" entry (empty when the workbench can't launch): a single row that
+     *  expands inline into the workbench's **launch profiles** — filtered to the providers the Docent can
+     *  drive — each with its provider icon. One profile → the row launches it directly, no chooser. [onPick]
+     *  gets the picked option; [widthOf] is the host surface's live width (the rail by default; the connect
+     *  card's interior when nested there); [label] lets a surface that lists sessions above phrase this as the
+     *  "or" path. */
+    private fun newSessionRows(
+        widthOf: () -> Int = { planList.width },
+        label: String = "Start a new agent session",
+        onPick: (SessionLaunchOption) -> Unit,
+    ): List<JComponent> {
+        val launcher = DocentReviewService.getInstance(project).sessionLauncher ?: return emptyList()
+        val options = launcher.launchOptions()
+        if (options.isEmpty()) return emptyList()
+        if (options.size == 1) {
+            val opt = options.first()
+            val row = iconTextRow(opt.icon, escapeHtml(label), unscaledReserve = 48,
+                tooltip = opt.label, widthOf = widthOf)
+            return listOf(clickableRow(row, false, JBUI.Borders.empty(4, 10)) { onPick(opt) })
         }
+        val header = iconTextRow(
+            null,
+            "&#x2726;&nbsp;&nbsp;${escapeHtml(label)}&nbsp;&nbsp;${if (showLaunchChoices) "&#x25BE;" else "&#x25B8;"}",
+            unscaledReserve = 28, widthOf = widthOf,
+        )
+        val rows = mutableListOf(clickableRow(header, false, JBUI.Borders.empty(4, 10)) {
+            showLaunchChoices = !showLaunchChoices
+            refreshList()
+        })
+        if (showLaunchChoices) options.mapTo(rows) { opt ->
+            val row = iconTextRow(opt.icon, escapeHtml(opt.label), unscaledReserve = 62, widthOf = widthOf)
+            clickableRow(row, false, JBUI.Borders.empty(3, 24, 3, 10)) {
+                showLaunchChoices = false
+                onPick(opt)
+            }
+        }
+        return rows
     }
 
     /** Ask [picked] to finalize and open the review now (clicked from the no-trail surface). No review is armed
@@ -777,16 +819,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refreshList()
     }
 
-    /**
-     * Launch a brand-new agent session and ask it to build the review from the recorded decisions (clicked from
-     * the no-trail surface's alternatives). The reliable path when none of the live sessions is the author — a
-     * fresh session can still call docent_finalize_trail, which consumes the project-wide decision log. [anchor]
-     * is the link the provider chooser opens above.
-     */
-    /** Launch a fresh agent session (of [provider]) that builds the review from the recorded decisions — the
-     *  no-trail "start a new session" path. A fresh session can still call docent_finalize_trail, which consumes
-     *  the project-wide decision log. */
-    private fun startFreshSessionWith(provider: String, label: String) {
+    /** Launch a fresh agent session ([option], a workbench launch profile) that builds the review from the
+     *  recorded decisions — the no-trail "start a new session" path, for when none of the live sessions is the
+     *  author. A fresh session can still call docent_finalize_trail, which consumes the project-wide decision
+     *  log. */
+    private fun startFreshSessionWith(option: SessionLaunchOption) {
         notice = null
         val launcher = DocentReviewService.getInstance(project).sessionLauncher ?: run {
             notice = "Agent Workbench isn't available. Start a session there, then it'll appear here to review."
@@ -795,17 +832,18 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
         val prompt = "Please start the Code Review Docent review: call docent_finalize_trail now to synthesize the " +
             "trail from the recorded decisions and open the walkthrough in the review UI."
-        if (launcher.startSession(prompt, provider)) {
-            awaitingStartFrom = "a new $label session"
+        if (launcher.startSession(prompt, option)) {
+            awaitingStartFrom = "“${option.label}”"
         } else {
-            notice = "Couldn't start a new $label session. Start one from the Agent Workbench instead."
+            notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench instead."
         }
         refreshList()
     }
 
-    /** Launch a fresh agent session and tell it to resume on the loaded trail (it arms the review itself via
-     *  docent_resume_review). The reliable path when there's no existing session to connect to. */
-    private fun startNewSession(provider: String, label: String) {
+    /** Launch a fresh agent session ([option], a workbench launch profile) and tell it to resume on the loaded
+     *  trail (it arms the review itself via docent_resume_review). The reliable path when there's no existing
+     *  session to connect to. */
+    private fun startNewSession(option: SessionLaunchOption) {
         val service = DocentReviewService.getInstance(project)
         notice = null
         val path = service.trailPath
@@ -818,8 +856,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val prompt = "Please resume the Code Review Docent review for the trail at `$path`. " +
             "Call docent_resume_review(path=\"$path\") now to load it into the review UI and connect yourself as " +
             "the Docent, then read the trail file to refresh the WHY before answering the reviewer."
-        if (!launcher.startSession(prompt, provider)) {
-            notice = "Couldn't start a new $label session. Start one from the Agent Workbench, then use Connect agent again."
+        if (!launcher.startSession(prompt, option)) {
+            notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench, then use Connect agent again."
             refreshList()
             return
         }
@@ -920,11 +958,5 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         controller.removeListener(this)
         DocentReviewService.getInstance(project).onChangesUpdated = null
         DecisionLog.getInstance(project).onUpdated = null
-    }
-
-    private companion object {
-        /** Providers the UI offers a "start a new session" entry for (value → display label). Matches the
-         *  providers the Docent can drive (Claude, Codex); see WorkbenchSessionDirectory.SUPPORTED_PROVIDERS. */
-        private val NEW_SESSION_PROVIDERS = listOf("claude" to "Claude", "codex" to "Codex")
     }
 }
