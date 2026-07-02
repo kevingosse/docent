@@ -609,7 +609,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
      * the agent's reply back into the thread (on the EDT). A no-op when no agent is driving the review (then
      * comments stay local, as before).
      */
-    private fun commentPoster(anchor: Anchor): CommentPoster = CommentPoster { thread, reviewerText, onReply ->
+    private fun commentPoster(anchor: Anchor): CommentPoster = CommentPoster { thread, reviewerText, onReply, onStalled ->
         val service = DocentReviewService.getInstance(project)
         if (!service.reviewActive) return@CommentPoster
         val section = controller.trail?.sections?.getOrNull(controller.currentSectionIndex)
@@ -627,9 +627,13 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             line = thread.line,
             context = context,
             text = reviewerText,
-        ) { reply ->
-            ApplicationManager.getApplication().invokeLater({ onReply(reply) }, ModalityState.any())
-        }
+            onReply = { reply ->
+                ApplicationManager.getApplication().invokeLater({ onReply(reply) }, ModalityState.any())
+            },
+            onStalled = { eventId ->
+                ApplicationManager.getApplication().invokeLater({ onStalled { service.nudge(eventId) } }, ModalityState.any())
+            },
+        )
     }
 
     /** Read one file's contents at a git revision; null if the path doesn't exist there (added/deleted). */

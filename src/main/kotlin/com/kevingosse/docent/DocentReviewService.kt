@@ -2,11 +2,14 @@ package com.kevingosse.docent
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.util.concurrency.AppExecutorUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -114,12 +117,21 @@ class DocentReviewService(private val project: Project) {
     private val events = LinkedBlockingQueue<ReviewEvent>()
     // Agent → UI: where each event's reply lands, keyed by event id. The sink marshals to the EDT itself.
     private val replySinks = ConcurrentHashMap<String, (String) -> Unit>()
+    // Events awaiting a reply, kept so [nudge] can re-deliver one; cleared with its sink.
+    private val pendingEvents = ConcurrentHashMap<String, ReviewEvent>()
+    // One liveness timer per in-flight event (see [postEvent]'s onStalled); cancelled on reply/cancel.
+    private val stallTimers = ConcurrentHashMap<String, ScheduledFuture<*>>()
     private val idGen = AtomicLong(0)
     private val changes = CopyOnWriteArrayList<QueuedChange>()
 
     /**
      * UI → agent. Enqueue a human remark and register [onReply] as where the agent's answer should land
      * (the sink is called off-EDT — it must marshal). Returns the event id the agent echoes in `docent_reply`.
+     *
+     * [onStalled] is the liveness check behind the UI's waiting spinners: nothing verifies the agent is still
+     * watching after arm time, so a dead watch would otherwise spin forever. If no reply lands within
+     * [REPLY_STALL_SECONDS] it is invoked once (off-EDT) with the event id — the UI swaps its spinner for a
+     * "not responding" affordance and can [nudge] the agent. The sink stays registered: a late reply still lands.
      */
     fun postEvent(
         kind: String,
@@ -130,11 +142,31 @@ class DocentReviewService(private val project: Project) {
         context: String,
         text: String,
         onReply: (String) -> Unit,
+        onStalled: ((eventId: String) -> Unit)? = null,
     ): String {
         val id = "evt-${idGen.incrementAndGet()}"
         replySinks[id] = onReply
-        dispatch(ReviewEvent(id, kind, sectionIndex, sectionHeadline, file, line, context, text))
+        val event = ReviewEvent(id, kind, sectionIndex, sectionHeadline, file, line, context, text)
+        pendingEvents[id] = event
+        if (onStalled != null) {
+            stallTimers[id] = AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                stallTimers.remove(id)
+                if (replySinks.containsKey(id)) onStalled(id)
+            }, REPLY_STALL_SECONDS, TimeUnit.SECONDS)
+        }
+        dispatch(event)
         return id
+    }
+
+    /**
+     * Re-deliver a still-unanswered event by pushing it straight into the agent's chat thread (the
+     * [EventNotifier] channel — the same push the UI-initiated resume uses). The "Nudge" affordance behind a
+     * stalled spinner: the file watch may have died with the agent none the wiser, but a chat push wakes it.
+     * False when the event was already answered, or no push channel can reach the agent.
+     */
+    fun nudge(eventId: String): Boolean {
+        val event = pendingEvents[eventId] ?: return false
+        return eventNotifier?.notifyAgent(event) == true
     }
 
     /**
@@ -154,6 +186,13 @@ class DocentReviewService(private val project: Project) {
     /** Stop routing replies for an event (its UI element was disposed). */
     fun cancelSink(id: String) {
         replySinks.remove(id)
+        clearStall(id)
+    }
+
+    /** An event is no longer awaiting a reply: drop its retained copy and cancel its liveness timer. */
+    private fun clearStall(id: String) {
+        pendingEvents.remove(id)
+        stallTimers.remove(id)?.cancel(false)
     }
 
     /**
@@ -172,6 +211,7 @@ class DocentReviewService(private val project: Project) {
     /** Agent → UI: deliver [text] to the element that originated [eventId]. False if nothing is waiting. */
     fun deliverReply(eventId: String, text: String): Boolean {
         val sink = replySinks[eventId] ?: return false
+        clearStall(eventId)
         sink(text)
         return true
     }
@@ -227,12 +267,19 @@ class DocentReviewService(private val project: Project) {
         eventLog = null
         events.clear()
         replySinks.clear()
+        stallTimers.values.forEach { it.cancel(false) }
+        stallTimers.clear()
+        pendingEvents.clear()
         changes.clear()
         onChangesUpdated?.invoke()
         onConnectionChanged?.invoke()
     }
 
     companion object {
+        /** How long a posted remark may go unanswered before its UI is told the Docent looks gone (T1 in
+         *  docs/ASSESSMENT.md). Generous — the agent may legitimately be reading code before replying. */
+        const val REPLY_STALL_SECONDS = 150L
+
         const val REVIEW_COMPLETED = "review_completed"
         const val REVIEW_RESUMED = "review_resumed"
         const val START_REVIEW = "start_review"

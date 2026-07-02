@@ -1,5 +1,6 @@
 package com.kevingosse.docent.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -7,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.RoundedLineBorder
+import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -77,6 +79,9 @@ class SectionConversationPanel(
 
     /** The in-transcript "Docent is thinking…" row while a reply is in flight (removed on the first chunk). */
     private var thinking: DocentUi.ThinkingRow? = null
+
+    /** The in-transcript "Docent isn't responding" notice after the liveness timeout (removed on reply/next send). */
+    private var stalledNotice: JComponent? = null
 
     init {
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
@@ -169,6 +174,7 @@ class SectionConversationPanel(
         val text = input.text.trim()
         if (text.isEmpty()) return
         input.text = ""
+        removeStalled()
         addUserBubble(text)
         busy = true
         sendButton.isEnabled = false
@@ -191,16 +197,18 @@ class SectionConversationPanel(
     private val turn = object : DocentConversationBackend.Turn {
         override fun onReply(t: String) = onEdt {
             removeThinking()
+            removeStalled() // a late reply after the liveness notice: the Docent is alive after all
             val b = streaming ?: DocentBubble().also { streaming = it; transcript.add(docentCard(it)) }
             b.append(t)
             refreshTranscript()
         }
         override fun onStatus(t: String) = onEdt { thinking?.setText(t.ifBlank { "Docent is thinking…" }) }
         override fun onDone() = onEdt {
-            if (streaming == null) addSystem("(no reply yet)")
+            if (streaming == null && stalledNotice == null) addSystem("(no reply yet)")
             endTurn()
         }
         override fun onError(message: String) = onEdt { failTurn(message) }
+        override fun onStalled(nudge: () -> Boolean) = onEdt { showStalled(nudge) }
     }
 
     private fun endTurn() {
@@ -219,6 +227,63 @@ class SectionConversationPanel(
     private fun removeThinking() {
         thinking?.let { transcript.remove(it) }
         thinking = null
+    }
+
+    /**
+     * The liveness timeout fired with no reply (T1 in docs/ASSESSMENT.md): stop the spinner, unlock the input
+     * (the reviewer isn't held hostage by a dead agent), and offer a nudge. The reply sink stays live — if the
+     * Docent answers after all, [turn]'s onReply removes this notice and the reply lands normally.
+     */
+    private fun showStalled(nudge: () -> Boolean) {
+        if (!busy) return // the reply landed in the meantime
+        removeThinking()
+        busy = false
+        streaming = null
+        onInputChanged()
+        stalledRow(nudge).also { stalledNotice = it; transcript.add(it) }
+        refreshTranscript()
+    }
+
+    private fun removeStalled() {
+        stalledNotice?.let { transcript.remove(it) }
+        stalledNotice = null
+    }
+
+    /** Warning icon + explanation + a "Nudge the Docent" link that re-pushes the remark into the agent's chat. */
+    private fun stalledRow(nudge: () -> Boolean): JComponent {
+        val status = DocentUi.WrappingText(
+            "The Docent hasn't responded. Its session may be busy — or its event watch may have stopped.",
+        ).apply { foreground = JBColor.GRAY }
+        val link = ActionLink("Nudge the Docent")
+        link.addActionListener {
+            link.isVisible = false
+            status.text = if (nudge()) {
+                "Nudged — the remark was re-sent to the agent's chat. Its reply will appear here."
+            } else {
+                "Couldn't reach the agent. Open its chat tab in the Agent Workbench, or reconnect via " +
+                    "“Connect agent…” in the Docent panel, then send your message again."
+            }
+            refreshTranscript()
+        }
+        return JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 6)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(JBLabel(AllIcons.General.BalloonWarning), BorderLayout.NORTH)
+                },
+                BorderLayout.WEST,
+            )
+            add(
+                JPanel(VerticalLayout(JBUI.scale(4))).apply {
+                    isOpaque = false
+                    add(status)
+                    add(link)
+                },
+                BorderLayout.CENTER,
+            )
+        }
     }
 
     // ----- transcript -----

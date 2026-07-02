@@ -25,6 +25,11 @@ interface DocentConversationBackend : Disposable {
         fun onStatus(text: String) {}
         fun onDone() {}
         fun onError(message: String) {}
+
+        /** The remark has gone unanswered past the liveness timeout — the agent's watch may be dead. The panel
+         *  should stop spinning and offer [nudge], which re-pushes the remark into the agent's chat thread
+         *  (false → the agent can't be reached at all). A late reply may still arrive via [onReply]. */
+        fun onStalled(nudge: () -> Boolean) {}
     }
 }
 
@@ -52,12 +57,16 @@ class McpLoopBackend(
             line = 0,
             context = "",
             text = text,
-        ) { reply ->
-            if (!disposed) {
-                turn.onReply(reply)
-                turn.onDone()
-            }
-        }
+            onReply = { reply ->
+                if (!disposed) {
+                    turn.onReply(reply)
+                    turn.onDone()
+                }
+            },
+            onStalled = { eventId ->
+                if (!disposed) turn.onStalled { service.nudge(eventId) }
+            },
+        )
         pendingIds.add(id)
     }
 

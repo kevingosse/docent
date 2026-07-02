@@ -22,6 +22,9 @@
     <depends optional="true" config-file="docent-awb.xml">com.intellij.agent.workbench</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- Balloon notifications (e.g. the workbench seam self-check warning when an AWB update breaks
+             the reflective integration — see awb/DocentWorkbenchSetup). -->
+        <notificationGroup id="Code Review Docent" displayType="BALLOON"/>
         <!-- Navigation (sections + files) lives in a left tool window; the review opens in the editor pane. -->
         <toolWindow id="Code Review Docent" anchor="left" canCloseContents="false"
                     icon="/icons/docent.svg"

@@ -2,6 +2,7 @@ package com.kevingosse.docent.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.panels.VerticalLayout
@@ -51,6 +52,10 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     /** True while a sent remark is awaiting the Docent's reply: the input is replaced by a spinner. */
     private var waiting = false
 
+    /** Set when the awaited reply blew the liveness timeout: the spinner becomes a "not responding" row
+     *  offering this nudge (re-push the remark into the agent's chat; false → unreachable). */
+    private var stalledNudge: (() -> Boolean)? = null
+
     private fun isDocent() = thread.author.equals("docent", ignoreCase = true)
     private fun isUser() = thread.author.equals("you", ignoreCase = true)
 
@@ -82,17 +87,29 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     /** Send the reviewer's words to the live Docent; append its reply to this thread when it lands (EDT). */
     private fun routeToAgent(reviewerText: String) {
         val p = poster ?: run { waiting = false; rebuild(); return }
-        p.post(thread, reviewerText) { reply ->
-            waiting = false
-            thread.replies.add(Reply("docent", reply))
-            if (thread.collapsed) thread.collapsed = false
-            rebuild()
-        }
+        p.post(
+            thread,
+            reviewerText,
+            { reply ->
+                waiting = false
+                stalledNudge = null
+                thread.replies.add(Reply("docent", reply))
+                if (thread.collapsed) thread.collapsed = false
+                rebuild()
+            },
+            { nudge ->
+                if (waiting) {
+                    stalledNudge = nudge
+                    rebuild()
+                }
+            },
+        )
     }
 
     /** Record that a remark was sent and is now awaiting the Docent — swaps the input for the spinner. */
     private fun beginWaiting() {
         waiting = true
+        stalledNudge = null
         rebuild()
     }
 
@@ -164,8 +181,46 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     }
 
     /** A spinner + "Docent is replying…" shown in place of the input while a remark awaits its reply —
-     *  the same waiting treatment as the section chat ([DocentUi.ThinkingRow]). */
-    private fun waitingRow(): JComponent = DocentUi.ThinkingRow("Docent is replying…")
+     *  the same waiting treatment as the section chat ([DocentUi.ThinkingRow]). Once the liveness timeout
+     *  fires ([stalledNudge] set), it becomes a "not responding" row instead of spinning forever. */
+    private fun waitingRow(): JComponent =
+        stalledNudge?.let { stalledRow(it) } ?: DocentUi.ThinkingRow("Docent is replying…")
+
+    /** The reply blew the liveness timeout: warn, offer a nudge (re-push into the agent's chat), and let the
+     *  reviewer dismiss back to the input. A late reply still lands via [routeToAgent]'s callback. */
+    private fun stalledRow(nudge: () -> Boolean): JComponent {
+        // widthProvider: the row sits in FlowLayout/VerticalLayout, which ask preferred height before assigning
+        // width — derive the wrap width from the card itself (minus the icon column) or the text never wraps.
+        val status = DocentUi.WrappingText(
+            "The Docent hasn't responded — its session may be busy or gone.",
+            widthProvider = { this@CommentCard.width - JBUI.scale(64) },
+        ).apply { foreground = JBColor.GRAY }
+        val nudgeLink = ActionLink("Nudge the Docent")
+        nudgeLink.addActionListener {
+            nudgeLink.isVisible = false
+            status.text = if (nudge()) {
+                "Nudged — the comment was re-sent to the agent's chat."
+            } else {
+                "Couldn't reach the agent. Open its chat tab, or reconnect via “Connect agent…”."
+            }
+            onChanged?.invoke()
+        }
+        val dismissLink = ActionLink("Dismiss") {
+            waiting = false
+            stalledNudge = null
+            rebuild()
+        }
+        return column(JBUI.scale(4)).apply {
+            add(
+                JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+                    isOpaque = false
+                    add(JBLabel(AllIcons.General.BalloonWarning), BorderLayout.WEST)
+                    add(status, BorderLayout.CENTER)
+                },
+            )
+            add(row(nudgeLink, dismissLink))
+        }
+    }
 
     /**
      * Wrap a reply [input] and its [buttons] so they stay collapsed (one line, buttons hidden) until the
