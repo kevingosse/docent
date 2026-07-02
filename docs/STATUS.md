@@ -115,8 +115,25 @@ The optional critic and the surrounding polish:
   (`showWhenFolded = false`); seeded comments are on changed lines so they show today.
 - **Multi-line comment ranges** (comments pin to a single line; the "+" keys off the caret line, not a
   selection) and pinning a comment to the **before** side (only the after side carries comments now).
-- Polish: narration/card text wrapping, plan-rail headline wrapping when narrow, the trailhead's
-  "instinctive scope" feel.
+- **UI redesign — BUILT 0.3.0, not click-tested.** The decided direction lives in `docs/UI.md`; all six
+  steps are implemented: a shared visual kit (`ui/DocentUi.kt` — one palette incl. a reserved critic
+  color, the single markup renderer, rounded cards/chips, segmented progress, wrapping-text and
+  empty/loading/thinking components); the trailhead as a title page (subject `h1`, derived scope line
+  via `GitChangeSet.numstat`, route cards with visited ✓, default-styled start/continue button, re-laid
+  on resize); a persistent trail header over both section views (progress strip + "Section N of M ·
+  headline" + file-type chips with per-file ±, current chip filled); the section chat restyled (Docent
+  messages on tinted rounded cards with its icon, streamed replies through the shared markup path — no
+  more raw `<code>` tags — in-transcript "thinking" row fed by backend statuses, growing input, Send
+  enabled only with text); rail polish (file-type icons + comment counts on file rows, visited ✓ icons,
+  "n of m read" progress echo under the subject, inline warning notices replacing the modal info
+  dialogs); and keyboard step nav (`Docent.NextStep`/`PrevStep`/`Overview` registered actions, Alt+. /
+  Alt+,, reused by the diff toolbar so tooltips show the shortcuts). This addressed the trailhead's
+  "instinctive scope" item and consolidated the three bespoke text-wrapping mechanisms into the kit.
+  **0.3.1** finished the wrapping consolidation: the rail's baked-width `wrapHtml`/`contentWidth`
+  machinery is gone — every row (subject, sections, files, session/connect rows, card titles) renders
+  through `DocentUi.WrappingHtmlPane` / `DocentNavPanel.iconTextRow`, which read their wrap width from a
+  *live* provider at each layout pass, and every wrapping container computes its max height dynamically.
+  Also: "Load trail…" now opens in `.idea/docent/` (where trails are written).
 
 ## Reference
 

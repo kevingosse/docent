@@ -55,6 +55,30 @@ object GitChangeSet {
             if (count <= 0) null else start..(start + count - 1)
         }
 
+    /**
+     * Per-file added/removed line counts vs the **working tree** (`git diff --numstat <beforeRef>`), keyed by
+     * project-root-relative path. Binary files (numstat prints "-") are skipped; renames ("a/{old => new}/b")
+     * are normalized to the new path. Purely *derived* — feeds the trailhead's scope line and the file chips
+     * (docs/UI.md §4/§5) without adding anything to the Trail. Off-EDT, like the rest.
+     */
+    fun numstat(base: String, beforeRef: String): Map<String, Pair<Int, Int>> =
+        lines(base, listOf("diff", "--numstat", beforeRef)).mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size < 3) return@mapNotNull null
+            val added = parts[0].toIntOrNull() ?: return@mapNotNull null
+            val removed = parts[1].toIntOrNull() ?: return@mapNotNull null
+            normalizeRename(parts.subList(2, parts.size).joinToString("\t")) to (added to removed)
+        }.toMap()
+
+    /** "src/{old => new}/f.kt" → "src/new/f.kt"; "old => new" → "new"; plain paths pass through. */
+    private fun normalizeRename(raw: String): String {
+        val braced = Regex("""\{([^{}]*) => ([^{}]*)}""")
+        if (braced.containsMatchIn(raw)) {
+            return braced.replace(raw) { it.groupValues[2] }.replace("//", "/")
+        }
+        return raw.substringAfterLast(" => ")
+    }
+
     private fun nameStatus(base: String, refs: List<String>): List<Change> =
         lines(base, listOf("diff", "--name-status") + refs).mapNotNull { line ->
             val parts = line.split('\t')

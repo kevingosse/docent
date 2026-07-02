@@ -8,11 +8,9 @@ import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
-import com.intellij.util.ui.AsyncProcessIcon
 import java.awt.event.ActionEvent
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
@@ -26,12 +24,8 @@ import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JTextPane
 import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
-import javax.swing.text.SimpleAttributeSet
-import javax.swing.text.StyleConstants
-import javax.swing.text.StyledDocument
 
 /**
  * A live, GitHub-PR-style inline comment card embedded in the editor. The reviewer can reply,
@@ -57,15 +51,12 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     /** True while a sent remark is awaiting the Docent's reply: the input is replaced by a spinner. */
     private var waiting = false
 
-    /** The live "Docent is replying…" spinner, while [waiting]; disposed and recreated on each rebuild. */
-    private var spinner: AsyncProcessIcon? = null
-
     private fun isDocent() = thread.author.equals("docent", ignoreCase = true)
     private fun isUser() = thread.author.equals("you", ignoreCase = true)
 
     init {
         isOpaque = true
-        background = if (isDocent()) JBColor(Color(0xF4F7FE), Color(0x2B3040)) else JBColor(Color(0xF3FAF3), Color(0x2C342C))
+        background = if (isDocent()) DocentUi.DOCENT_MSG_BG else DocentUi.REVIEWER_MSG_BG
         border = BorderFactory.createCompoundBorder(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(8, 10),
@@ -74,8 +65,6 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     }
 
     private fun rebuild() {
-        spinner?.dispose()
-        spinner = null
         removeAll()
         add(
             when {
@@ -174,11 +163,9 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         return content
     }
 
-    /** A spinner + "Docent is replying…" shown in place of the input while a remark awaits its reply. */
-    private fun waitingRow(): JComponent {
-        val icon = AsyncProcessIcon("docent-reply").also { spinner = it; it.resume() }
-        return row(icon, JBLabel("Docent is replying…").apply { foreground = JBColor.GRAY })
-    }
+    /** A spinner + "Docent is replying…" shown in place of the input while a remark awaits its reply —
+     *  the same waiting treatment as the section chat ([DocentUi.ThinkingRow]). */
+    private fun waitingRow(): JComponent = DocentUi.ThinkingRow("Docent is replying…")
 
     /**
      * Wrap a reply [input] and its [buttons] so they stay collapsed (one line, buttons hidden) until the
@@ -254,53 +241,20 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
     private fun authorLabel(author: String) =
         JBLabel(if (author.equals("docent", true)) "Docent" else "You").apply {
             font = font.deriveFont(Font.BOLD)
-            foreground = if (author.equals("docent", true)) DOCENT else YOU
+            if (author.equals("docent", true)) {
+                foreground = DocentUi.DOCENT
+                icon = DocentUi.ICON
+                iconTextGap = JBUI.scale(6)
+            } else {
+                foreground = DocentUi.REVIEWER
+            }
         }
 
     /**
-     * Render a comment body. The authoring/Docent agents sprinkle a little inline HTML — `<em>`/`<i>`
-     * (emphasis), `<code>` (inline code), `<strong>`/`<b>`, plus `<br>`/`<p>` breaks and entities. We
-     * parse just those into a styled [JTextPane] (mixed fonts, unlike a plain text area) so they render
-     * as italics / monospace instead of showing raw tags; everything else is stripped.
+     * Render a comment body through the shared markup path ([DocentUi.appendMarkup]) — the same renderer
+     * as the section chat, so agent-emitted inline HTML shows styled (italics/monospace), never raw tags.
      */
-    private fun bodyArea(text: String): JComponent = JTextPane().apply {
-        isEditable = false
-        isOpaque = false
-        border = null
-        font = UIUtil.getLabelFont()
-        appendMarkup(styledDocument, text)
-    }
-
-    private fun appendMarkup(doc: StyledDocument, text: String) {
-        var bold = false
-        var italic = false
-        var code = false
-        fun flush(s: String) {
-            if (s.isEmpty()) return
-            val attr = SimpleAttributeSet()
-            StyleConstants.setBold(attr, bold)
-            StyleConstants.setItalic(attr, italic)
-            if (code) {
-                StyleConstants.setFontFamily(attr, Font.MONOSPACED)
-                StyleConstants.setBackground(attr, CODE_BG)
-            }
-            doc.insertString(doc.length, decodeEntities(s), attr)
-        }
-        var last = 0
-        for (m in TAG.findAll(text)) {
-            flush(text.substring(last, m.range.first))
-            val closing = m.groupValues[1] == "/"
-            when (m.groupValues[2].lowercase()) {
-                "em", "i" -> italic = !closing
-                "strong", "b" -> bold = !closing
-                "code" -> code = !closing
-                "br" -> doc.insertString(doc.length, "\n", null)
-                "p" -> if (closing) doc.insertString(doc.length, "\n", null)
-            }
-            last = m.range.last + 1
-        }
-        flush(text.substring(last))
-    }
+    private fun bodyArea(text: String): JComponent = DocentUi.markupPane(text)
 
     /** Send on Ctrl+Enter (and Cmd+Enter on macOS); plain Enter still inserts a newline. */
     private fun JBTextArea.onCtrlEnter(action: () -> Unit) {
@@ -324,25 +278,5 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         )
     }
 
-    private fun preview(text: String): String {
-        val plain = decodeEntities(TAG.replace(text, " "))
-        val oneLine = plain.replace(Regex("\\s+"), " ").trim()
-        return if (oneLine.length > 80) oneLine.take(77) + "…" else oneLine
-    }
-
-    /** Decode the handful of HTML entities the agents emit; `&amp;` last so it can't re-trigger others. */
-    private fun decodeEntities(s: String): String =
-        s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-            .replace("&#39;", "'").replace("&apos;", "'").replace("&nbsp;", " ").replace("&amp;", "&")
-
-    companion object {
-        private val DOCENT = JBColor(Color(0x3574F0), Color(0x4A88FF))
-        private val YOU = JBColor(Color(0x4C9A4E), Color(0x62B266))
-
-        /** Subtle inline-code chip background (light / dark). */
-        private val CODE_BG = JBColor(Color(0xE8EAED), Color(0x3A3F4B))
-
-        /** Matches one HTML tag: group 1 = "/" if a closing tag, group 2 = tag name. */
-        private val TAG = Regex("<\\s*(/?)\\s*([a-zA-Z]+)[^>]*>")
-    }
+    private fun preview(text: String): String = DocentUi.preview(text)
 }

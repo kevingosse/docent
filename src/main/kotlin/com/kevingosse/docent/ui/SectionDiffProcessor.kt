@@ -4,11 +4,8 @@ import com.intellij.diff.chains.DiffRequestChain
 import com.intellij.diff.impl.CacheDiffRequestChainProcessor
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.Separator
-import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 
 /**
@@ -44,21 +41,19 @@ class SectionDiffProcessor(
 
     override fun getNavigationActions(): MutableList<AnAction> {
         val base = super.getNavigationActions()
+        val am = ActionManager.getInstance()
 
-        // Review-step nav, shown for every file (mirrors the old top-bar Overview/Prev/Next).
-        val review = project?.let { p ->
-            val controller = DocentReviewController.getInstance(p)
-            listOf<AnAction>(
-                ReviewOverviewAction(controller),
-                ReviewStepAction(controller, forward = false),
-                ReviewStepAction(controller, forward = true),
-                Separator.getInstance(),
-            )
-        }.orEmpty()
+        // Review-step nav, shown for every file. These are the *registered* actions (DocentStepActions +
+        // plugin.xml), so their keyboard shortcuts (Alt+. / Alt+,) show in the toolbar tooltips.
+        val review = listOfNotNull(
+            am.getAction("Docent.Overview"),
+            am.getAction("Docent.PrevStep"),
+            am.getAction("Docent.NextStep"),
+            Separator.getInstance(),
+        )
 
         val c = getActiveRequest()?.getUserData(DocentFocusMarker.CONTROLLER)
             ?: return (review + base).toMutableList()
-        val am = ActionManager.getInstance()
         val kept = base.filter { it == null || am.getId(it) !in REMOVED_NAV_IDS }
         val ours = listOf(
             ToggleDimmingAction(c),
@@ -74,34 +69,4 @@ class SectionDiffProcessor(
         // The built-in difference-navigation actions we replace with section-scoped ones.
         val REMOVED_NAV_IDS = setOf("PreviousDiff", "NextDiff")
     }
-}
-
-/** Jump back to the review Overview (the thesis) — mirrors the old top-bar "Overview" button. */
-private class ReviewOverviewAction(private val controller: DocentReviewController) :
-    DumbAwareAction("Overview", "Back to the review overview", AllIcons.Actions.ListFiles) {
-    override fun actionPerformed(e: AnActionEvent) = controller.showOverview()
-    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-}
-
-/**
- * Walk the flattened review steps (each section's summary → its files → the next section). Mirrors the
- * old top-bar Prev/Next; enablement tracks [DocentReviewController.hasPrev]/[DocentReviewController.hasNext].
- */
-private class ReviewStepAction(
-    private val controller: DocentReviewController,
-    private val forward: Boolean,
-) : DumbAwareAction(
-    if (forward) "Next Step" else "Previous Step",
-    if (forward) "Go to the next step in the review" else "Go to the previous step in the review",
-    if (forward) AllIcons.Actions.Forward else AllIcons.Actions.Back,
-) {
-    override fun actionPerformed(e: AnActionEvent) {
-        if (forward) controller.goNext() else controller.goPrev()
-    }
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = if (forward) controller.hasNext() else controller.hasPrev()
-    }
-
-    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 }

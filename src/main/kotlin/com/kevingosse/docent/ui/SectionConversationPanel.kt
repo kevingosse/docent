@@ -5,8 +5,8 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
-import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
+import com.intellij.ui.RoundedLineBorder
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -16,7 +16,6 @@ import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.trail.Section
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Dimension
 import java.awt.Font
 import java.awt.LayoutManager
@@ -25,16 +24,26 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.BorderFactory
 import javax.swing.JButton
-import javax.swing.JEditorPane
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JTextPane
 import javax.swing.Scrollable
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 /**
  * The section as a conversation (docs/DESIGN.md §6/§8). It opens with the section **narration** as the Docent's
  * first message and the human continues from there — one natural thread, not a separate "discuss" strip. The
  * Docent is the coding agent that authored the change, answering from first-hand knowledge ("the Docent
  * presents; the human asks", §4).
+ *
+ * Visual grammar (docs/UI.md §6): everything the Docent says sits on a tinted rounded card under its icon —
+ * the same voice treatment as its inline comment cards — while the reviewer's messages stay plain. Live
+ * replies render through the shared markup path ([DocentUi.appendMarkup]), so agent-emitted inline HTML shows
+ * as italics/monospace instead of raw tags. While a reply is in flight an in-transcript
+ * [DocentUi.ThinkingRow] marks where it will land (backend statuses stream into its label).
  *
  * Holds a [McpLoopBackend], created lazily on the first human message, that routes the remark to the connected
  * agent. The conversation is only usable when an agent is connected ([DocentReviewService.reviewActive]); when
@@ -49,7 +58,7 @@ class SectionConversationPanel(
 
     private val transcript = ScrollablePanel(VerticalLayout(JBUI.scale(10))).apply {
         isOpaque = false
-        border = JBUI.Borders.empty(8, 10)
+        border = JBUI.Borders.empty(10, 12)
     }
     private val input = JBTextArea().apply {
         rows = 2
@@ -57,31 +66,39 @@ class SectionConversationPanel(
         wrapStyleWord = true
         font = UIUtil.getLabelFont()
         emptyText.text = "Ask the Docent about this section — Enter to send, Shift+Enter for a new line"
-        border = JBUI.Borders.empty(4)
+        border = JBUI.Borders.empty(4, 6)
     }
     private val sendButton = JButton("Send")
-    private val status = JBLabel("").apply { foreground = JBColor.GRAY }
 
     private var backend: DocentConversationBackend? = null
     @Volatile private var disposed = false
     private var busy = false
-    private var streaming: Bubble? = null
+    private var streaming: DocentBubble? = null
+
+    /** The in-transcript "Docent is thinking…" row while a reply is in flight (removed on the first chunk). */
+    private var thinking: DocentUi.ThinkingRow? = null
 
     init {
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = false
             add(
                 JBScrollPane(input).apply {
-                    border = BorderFactory.createLineBorder(JBColor.border())
-                    preferredSize = Dimension(0, JBUI.scale(52))
+                    border = BorderFactory.createCompoundBorder(
+                        RoundedLineBorder(JBColor.border(), JBUI.scale(10)),
+                        JBUI.Borders.empty(1),
+                    )
+                    isOpaque = false
+                    viewport.isOpaque = false
                 },
                 BorderLayout.CENTER,
             )
-            add(sendButton, BorderLayout.EAST)
-        }
-        val south = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(2, 10, 8, 10)
-            add(status.apply { border = JBUI.Borders.emptyBottom(3) }, BorderLayout.NORTH)
-            add(inputRow, BorderLayout.CENTER)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(sendButton, BorderLayout.SOUTH) // pin the button to the input's bottom edge as it grows
+                },
+                BorderLayout.EAST,
+            )
         }
         add(
             JBScrollPane(transcript).apply {
@@ -90,7 +107,14 @@ class SectionConversationPanel(
             },
             BorderLayout.CENTER,
         )
-        add(south, BorderLayout.SOUTH)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(6, 12, 10, 12)
+                add(inputRow, BorderLayout.CENTER)
+            },
+            BorderLayout.SOUTH,
+        )
 
         sendButton.addActionListener { send() }
         input.addKeyListener(object : KeyAdapter() {
@@ -101,10 +125,29 @@ class SectionConversationPanel(
                 }
             }
         })
+        // Grow the input with its content (up to ~6 rows), and only offer Send when there's something to send.
+        input.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = onInputChanged()
+            override fun removeUpdate(e: DocumentEvent) = onInputChanged()
+            override fun changedUpdate(e: DocumentEvent) = onInputChanged()
+        })
 
         // The section narration is the Docent's opening message; the discussion flows on from it.
-        addDocentHtml(section.narration)
+        transcript.add(docentCard(DocentUi.htmlPane(section.narration)))
         applyConnectionState()
+        onInputChanged()
+        SwingUtilities.invokeLater { transcript.scrollRectToVisible(Rectangle(0, 0, 1, 1)) }
+    }
+
+    private fun onInputChanged() {
+        val connected = DocentReviewService.getInstance(project).reviewActive
+        sendButton.isEnabled = connected && !busy && input.text.isNotBlank()
+        val rows = input.lineCount.coerceIn(2, 6)
+        if (rows != input.rows) {
+            input.rows = rows
+            input.revalidate()
+            revalidate()
+        }
     }
 
     /** Enable the input only when an agent is connected; otherwise hint the reviewer to connect one. The panel
@@ -112,7 +155,7 @@ class SectionConversationPanel(
     private fun applyConnectionState() {
         val connected = DocentReviewService.getInstance(project).reviewActive
         input.isEnabled = connected
-        sendButton.isEnabled = connected && !busy
+        sendButton.isEnabled = connected && !busy && input.text.isNotBlank()
         input.emptyText.text = if (connected) {
             "Ask the Docent about this section — Enter to send, Shift+Enter for a new line"
         } else {
@@ -126,10 +169,12 @@ class SectionConversationPanel(
         val text = input.text.trim()
         if (text.isEmpty()) return
         input.text = ""
-        addBubble("you", text)
+        addUserBubble(text)
         busy = true
         sendButton.isEnabled = false
         streaming = null
+        thinking = DocentUi.ThinkingRow().also { transcript.add(it) }
+        refreshTranscript()
         backend().send(text, turn)
     }
 
@@ -145,11 +190,12 @@ class SectionConversationPanel(
 
     private val turn = object : DocentConversationBackend.Turn {
         override fun onReply(t: String) = onEdt {
-            val b = streaming ?: addBubble("docent", "").also { streaming = it }
+            removeThinking()
+            val b = streaming ?: DocentBubble().also { streaming = it; transcript.add(docentCard(it)) }
             b.append(t)
-            scrollToBottom()
+            refreshTranscript()
         }
-        override fun onStatus(t: String) = onEdt { status.text = t }
+        override fun onStatus(t: String) = onEdt { thinking?.setText(t.ifBlank { "Docent is thinking…" }) }
         override fun onDone() = onEdt {
             if (streaming == null) addSystem("(no reply yet)")
             endTurn()
@@ -159,10 +205,10 @@ class SectionConversationPanel(
 
     private fun endTurn() {
         busy = false
-        sendButton.isEnabled = true
-        status.text = ""
+        removeThinking()
         streaming = null
-        scrollToBottom()
+        onInputChanged()
+        refreshTranscript()
     }
 
     private fun failTurn(message: String) {
@@ -170,15 +216,48 @@ class SectionConversationPanel(
         endTurn()
     }
 
+    private fun removeThinking() {
+        thinking?.let { transcript.remove(it) }
+        thinking = null
+    }
+
     // ----- transcript -----
 
-    private fun addBubble(author: String, text: String): Bubble {
-        val b = Bubble(author).apply { setText(text) }
-        transcript.add(b)
+    private fun refreshTranscript() {
         transcript.revalidate()
         transcript.repaint()
         scrollToBottom()
-        return b
+    }
+
+    /** The reviewer's message: a green "You" over plain wrapping text — deliberately lighter than the
+     *  Docent's cards, so the two voices scan apart at a glance. */
+    private fun addUserBubble(text: String) {
+        transcript.add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(2, 6)
+                add(
+                    JBLabel("You").apply {
+                        font = font.deriveFont(Font.BOLD)
+                        foreground = DocentUi.REVIEWER
+                        border = JBUI.Borders.emptyBottom(2)
+                    },
+                    BorderLayout.NORTH,
+                )
+                add(
+                    JBTextArea(text).apply {
+                        isEditable = false
+                        isOpaque = false
+                        lineWrap = true
+                        wrapStyleWord = true
+                        border = null
+                        font = UIUtil.getLabelFont()
+                    },
+                    BorderLayout.CENTER,
+                )
+            },
+        )
+        refreshTranscript()
     }
 
     private fun addSystem(text: String) {
@@ -193,48 +272,24 @@ class SectionConversationPanel(
                 foreground = JBColor.GRAY
             },
         )
-        transcript.revalidate()
-        transcript.repaint()
-        scrollToBottom()
+        refreshTranscript()
     }
 
-    /** The Docent's opening message: the section narration, rendered as HTML so its formatting survives. */
-    private fun addDocentHtml(html: String) {
-        val body = JEditorPane("text/html", wrapHtml(html)).apply {
-            isEditable = false
-            isOpaque = false
-            border = null
-            putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
+    /** Wrap [body] in the Docent's voice treatment: its icon + name over a tinted rounded card. */
+    private fun docentCard(body: JComponent): JComponent =
+        DocentUi.RoundedPanel(DocentUi.DOCENT_MSG_BG).apply {
+            border = JBUI.Borders.empty(8, 10)
+            add(
+                JBLabel("Docent", DocentUi.ICON, SwingConstants.LEADING).apply {
+                    font = font.deriveFont(Font.BOLD)
+                    foreground = DocentUi.DOCENT
+                    iconTextGap = JBUI.scale(6)
+                    border = JBUI.Borders.emptyBottom(4)
+                },
+                BorderLayout.NORTH,
+            )
+            add(body, BorderLayout.CENTER)
         }
-        transcript.add(
-            JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(2, 6)
-                add(
-                    JBLabel(displayName("docent")).apply {
-                        font = font.deriveFont(Font.BOLD)
-                        foreground = colorFor("docent")
-                        border = JBUI.Borders.emptyBottom(2)
-                    },
-                    BorderLayout.NORTH,
-                )
-                add(body, BorderLayout.CENTER)
-            },
-        )
-        transcript.revalidate()
-        transcript.repaint()
-        SwingUtilities.invokeLater { transcript.scrollRectToVisible(Rectangle(0, 0, 1, 1)) }
-    }
-
-    private fun wrapHtml(body: String): String {
-        val f = JBUI.Fonts.label()
-        val fg = ColorUtil.toHtmlColor(JBColor.foreground())
-        return "<html><head><style>" +
-            "body{font-family:'${f.family}';font-size:${f.size}pt;color:$fg;margin:0;padding:0;}" +
-            "p{margin:0 0 10px 0;} ul{margin:0 0 10px 18px;padding:0;} li{margin:0 0 6px 0;}" +
-            "code{font-family:monospace;}" +
-            "</style></head><body>$body</body></html>"
-    }
 
     private fun scrollToBottom() = SwingUtilities.invokeLater {
         transcript.scrollRectToVisible(Rectangle(0, transcript.height - 1, 1, 1))
@@ -251,38 +306,29 @@ class SectionConversationPanel(
 
     // ----- small components -----
 
-    /** One transcript entry: a bold author label over a wrapping body. */
-    private inner class Bubble(author: String) : JPanel(BorderLayout()) {
-        private val body = JBTextArea().apply {
+    /**
+     * A streaming Docent reply: raw chunks accumulate in a buffer and re-render through the shared markup
+     * path on each append, so inline HTML (`<code>`, `<em>`, …) shows styled — never as raw tags.
+     */
+    private class DocentBubble : JPanel(BorderLayout()) {
+        private val pane = JTextPane().apply {
             isEditable = false
             isOpaque = false
-            lineWrap = true
-            wrapStyleWord = true
             border = null
             font = UIUtil.getLabelFont()
         }
+        private val buffer = StringBuilder()
 
         init {
             isOpaque = false
-            border = JBUI.Borders.empty(2, 6)
-            add(
-                JBLabel(displayName(author)).apply {
-                    font = font.deriveFont(Font.BOLD)
-                    foreground = colorFor(author)
-                    border = JBUI.Borders.emptyBottom(2)
-                },
-                BorderLayout.NORTH,
-            )
-            add(body, BorderLayout.CENTER)
-        }
-
-        fun setText(t: String) {
-            body.text = t
-            revalidate()
+            add(pane, BorderLayout.CENTER)
         }
 
         fun append(t: String) {
-            body.text = body.text + t
+            buffer.append(t)
+            val doc = pane.styledDocument
+            doc.remove(0, doc.length)
+            DocentUi.appendMarkup(doc, buffer.toString())
             revalidate()
         }
     }
@@ -294,18 +340,5 @@ class SectionConversationPanel(
         override fun getScrollableBlockIncrement(r: Rectangle, orientation: Int, direction: Int) = JBUI.scale(100)
         override fun getScrollableTracksViewportWidth() = true
         override fun getScrollableTracksViewportHeight() = false
-    }
-
-    private fun displayName(author: String) = when {
-        author.equals("docent", true) -> "Docent"
-        author.equals("you", true) -> "You"
-        else -> author
-    }
-
-    private fun colorFor(author: String) = if (author.equals("docent", true)) DOCENT else YOU
-
-    companion object {
-        private val DOCENT = JBColor(Color(0x3574F0), Color(0x4A88FF))
-        private val YOU = JBColor(Color(0x4C9A4E), Color(0x62B266))
     }
 }
