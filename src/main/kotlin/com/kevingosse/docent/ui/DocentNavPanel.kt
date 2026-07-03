@@ -314,6 +314,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             ))
             planList.add(messageLabel("Ask the agent to call docent_finalize_trail, or open a saved trail:"))
             planList.add(loadTrailLink())
+            planList.add(discardDecisionsLink(total))
             return
         }
 
@@ -335,6 +336,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     .forEach { planList.add(it) }
                 planList.add(loadTrailLink())
             }
+            planList.add(discardDecisionsLink(total))
             return
         }
 
@@ -346,6 +348,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
             .forEach { planList.add(it) }
         planList.add(loadTrailLink())
+        planList.add(discardDecisionsLink(total))
     }
 
     /**
@@ -566,6 +569,25 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
 
     private fun loadTrailLink(): JComponent = actionLinkRow("Load a saved trail…") { loadTrail() }
+
+    /**
+     * Discard the whole pending decision log (a human action, not an agent one): you finished a change without
+     * reviewing it and are starting fresh with a clean agent, but its decisions are still queued here and would
+     * bleed into the next review. Guarded by a confirmation dialog — this is destructive (the on-disk
+     * decisions.json is deleted) and the link sits right beside the "start review" actions, so an accidental
+     * click must not silently wipe the queue.
+     */
+    private fun discardDecisionsLink(total: Int): JComponent = actionLinkRow("Discard pending decisions…") {
+        val message = "Discard $total pending ${decisions(total)}? This clears everything the coding agent has " +
+            "recorded so far and can't be undone. Start this only if you don't intend to review that work."
+        if (Messages.showYesNoDialog(project, message, "Discard Pending Decisions", "Discard", Messages.getCancelButton(), Messages.getWarningIcon()) == Messages.YES) {
+            DecisionLog.getInstance(project).clear()
+            notice = null
+            completionNote = null
+            awaitingStartFrom = null
+            refreshList()
+        }
+    }
 
     /** A left-aligned inline link row (replaces the old bottom buttons). */
     private fun actionLinkRow(text: String, action: () -> Unit): JComponent =
