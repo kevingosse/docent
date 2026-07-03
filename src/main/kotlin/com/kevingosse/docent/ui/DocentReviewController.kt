@@ -64,6 +64,33 @@ class DocentReviewController(private val project: Project) {
     var reviewTabOpen = false
         private set
 
+    // ----- Per-section conversation history (F1 in docs/ASSESSMENT.md) -----------------------------
+    //
+    // The section chat's transcript used to exist only as Swing children of the per-section
+    // SectionConversationPanel, which DocentPanel disposes on every section switch — so navigating away
+    // silently erased the conversation (reported live in a real review, 2026-07-03). The durable model
+    // lives here because this controller already owns everything else keyed by section and outlives every
+    // panel rebuild; the panel replays it on build and appends as the conversation happens.
+
+    enum class ChatRole { USER, DOCENT }
+    data class ChatEntry(val role: ChatRole, val text: String)
+
+    private val sectionChats = HashMap<Int, MutableList<ChatEntry>>()
+
+    fun chatHistory(sectionIndex: Int): List<ChatEntry> = sectionChats[sectionIndex].orEmpty().toList()
+
+    /** Append an entry; returns its index so a streaming reply can [updateChatEntry] as chunks land. */
+    fun recordChatEntry(sectionIndex: Int, entry: ChatEntry): Int {
+        val list = sectionChats.getOrPut(sectionIndex) { mutableListOf() }
+        list.add(entry)
+        return list.size - 1
+    }
+
+    fun updateChatEntry(sectionIndex: Int, entryIndex: Int, text: String) {
+        val list = sectionChats[sectionIndex] ?: return
+        if (entryIndex in list.indices) list[entryIndex] = list[entryIndex].copy(text = text)
+    }
+
     private val listeners = CopyOnWriteArrayList<Listener>()
 
     fun addListener(l: Listener) = listeners.add(l)
@@ -82,6 +109,7 @@ class DocentReviewController(private val project: Project) {
         currentSectionIndex = -1
         currentFileIndex = 0
         visited.clear()
+        sectionChats.clear() // a (re)loaded trail reshuffles section indexes — old conversations don't map
         listeners.forEach { it.onModelChanged() }
         appendOtherChangesSection()
     }
@@ -380,6 +408,7 @@ class DocentReviewController(private val project: Project) {
         currentSectionIndex = -1
         currentFileIndex = 0
         visited.clear()
+        sectionChats.clear()
         FileEditorManager.getInstance(project).closeFile(OpenDocentReviewAction.getOrCreateFile(project))
         listeners.forEach { it.onModelChanged() }
     }

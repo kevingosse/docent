@@ -4,11 +4,13 @@ Read **`docs/DESIGN.md`** (the why / principles / architecture) and **`CLAUDE.md
 build/run) first. This file is the short "where we are and what's next" snapshot — the *how it was
 built* lives in the code and its comments, not here.
 
-> Last established: 2026-07-02, plugin **0.3.1**. Everything under "Where we are" is **click-tested
-> in a live Rider**, and the full loop has been run end-to-end on a couple of **real reviews in
-> separate projects** (dogfooding on *this* repo is awkward — the agent authoring the change is the
-> one under review). `docs/ASSESSMENT.md` (2026-07-01) predates this pass and inherited stale
-> "not click-tested" claims from the previous STATUS — its judgment stands, its facts don't all.
+> Last established: 2026-07-03, plugin **0.4.0** (first-wave release prep). Everything under
+> "Where we are" is **click-tested in a live Rider** — EXCEPT the 0.4.0 onboarding items marked
+> *(built, not yet click-tested)* below — and the full loop has been run end-to-end on a couple of
+> **real reviews in separate projects** (dogfooding on *this* repo is awkward — the agent authoring
+> the change is the one under review). `docs/ASSESSMENT.md` (2026-07-01) predates this pass and
+> inherited stale "not click-tested" claims from the previous STATUS — its judgment stands, its
+> facts don't all.
 
 ## Where we are
 
@@ -55,6 +57,32 @@ Both halves of the loop, all verified live:
 Workbench integration ships as **optional modules** gated on `com.intellij.mcpServer` and
 `agent-workbench`; the core stays platform-clean and loads without either.
 
+- **First-run onboarding (0.4.0, built, not yet click-tested).** The silent new-user failure —
+  agents never seeing the `docent_*` tools — is closed by giving Docent **its own MCP endpoint**.
+  (a) `DocentMcpEndpoint` holds a long-lived `McpServerService.authorizedSession` on the IDE's
+  *private* MCP server (separate port, per-IDE-run `IJ_MCP_AUTH_TOKEN`, runs regardless of the
+  user-facing "Enable MCP server" setting) with a `TextMcpToolFilter` exposing ONLY the docent
+  toolset — so agents get exactly 8 tools, not the public server's ~119, and nothing is duplicated
+  when the user's own client config also registers the public server. (b) `DocentLaunchContributor`
+  injects it per launch, ADDITIVELY (never `--strict-mcp-config`, no AWB registry keys): Claude gets
+  `--mcp-config {"mcpServers":{"docent":{url, headers:{IJ_MCP_AUTH_TOKEN}}}}` (variadic, merges with
+  all other MCP sources; skipped if AWB's own managed wiring put `--strict-mcp-config` on the
+  command); Codex gets `-c mcp_servers.docent.url/.http_headers.IJ_MCP_AUTH_TOKEN/.tool_timeout_sec`
+  (dotted `-c` paths CREATE the entry — both verified against the live CLIs). URL + token are
+  resolved fresh per launch, so they can't go stale. No `~/.codex/config.toml` entry required
+  anymore (a user `rider` entry, if present, still gets its timeout patched defensively).
+  (c) Fallback ladder + honest surfaces: endpoint → public-server URL (`McpStreamUrlProvider`) →
+  nothing; `McpPrereq`/`DocentMcpPrereqActivity` arm the endpoint at project open and only warn
+  (nav-rail notice + balloon, one-click "Turn on the MCP server" = restore the fallback path) when
+  BOTH rungs are unavailable. The MCP-server setting is no longer a first-run prerequisite.
+- **Follow-up loop v1 (0.4.0, built, not yet click-tested).** On `review_completed` the agent is now
+  instructed — in the envelope hint (compaction-proof), the protocol tails, and the toolset text —
+  to record a decision per implemented reviewer request and announce the delta is reviewable; the
+  standard on-demand start surface then hosts the follow-up review (see "What's left" #1).
+- **Release engineering:** CI/release builds are pinned to **2026.2-EAP8-SNAPSHOT** (= build
+  262.8377, the exact local dev base and AWB pin) instead of the rolling `2026.2-SNAPSHOT`; README
+  rewritten as a first-user install/usage guide.
+
 **Known constraint:** on **.slnx** solutions the workbench's persisted session store has empty
 thread lists (AWB bug), so the supported `AgentPromptLaunchers` push can't find the target thread.
 Worked around by typing into the session's open chat-tab terminal (`AgentChatFileEditor.tab.sendText`,
@@ -83,12 +111,12 @@ The live Docent runs **over ACP** (model-independent), integrated with the workb
 
 Ranked by what real use has actually surfaced:
 
-1. **Review the agent's response-changes — the roughest edge in real use.** After "Complete review"
-   dispatches the queued *requested changes*, the agent edits the code — and that delta, the code
-   the reviewer most explicitly wants to verify, lands as a raw working-tree diff with no Trail, no
-   narration, no continuity with the remark that prompted it. Close the loop in the same surface:
-   e.g. a resolved/changed state on the original requested-change card with its edit attached, or a
-   follow-up mini-Trail for the delta.
+1. **Review the agent's response-changes — the roughest edge in real use.** v1 shipped in 0.4.0:
+   the agent records a decision per implemented request, and the on-demand surface hosts a
+   follow-up review of the delta (the synthesized "Other changes" section absorbs the
+   already-reviewed remainder). Still open — the real UI continuity: a resolved/changed state on
+   the original requested-change card with its edit attached, and a baseline snapshot at
+   "Complete review" so an uncommitted follow-up diffs against the reviewed state instead of HEAD.
 2. **The critic** (the differentiator): "Request code review" → spawn the different-model critic
    over the retained ACP transport; its findings land as a **visually distinct third comment layer**
    (author / critic / you — `CommentCard` already separates two, and the kit reserves the color).
@@ -99,18 +127,31 @@ Ranked by what real use has actually surfaced:
 
 ### Smaller backlog
 
-- Robustness items from `docs/ASSESSMENT.md` §3–4 that survive this status pass: review state
-  persistence across tab close / section switch (F1), unread-reply signal (F4), anchor
-  re-resolution at load (F3), tests for the interval/anchor math (T3), single-sourcing the Trail
-  schema text (T4). **Done in 0.3.2 (built, not yet click-tested):** T1 — a ~2.5-min liveness
+- **Pre-dispatch queue review** (reviewer request, 2026-07-03): on "Complete review", show the
+  accumulated requested-change list and let the reviewer edit the wording, drop, or reorder items
+  before they're dispatched — the queue text is the agent's marching orders and currently goes out
+  sight-unseen, including the Docent's own paraphrasing of each request.
+
+- Robustness items from `docs/ASSESSMENT.md` §3–4 that survive this status pass: unread-reply
+  signal (F4), anchor re-resolution at load (F3), tests for the interval/anchor math (T3),
+  single-sourcing the Trail schema text (T4). **F1 partially done in 0.4.2** (review-response,
+  reported live in a real review): section chat transcripts now persist across section switches
+  (durable model on `DocentReviewController.sectionChats`, replayed on rebuild, mirrored per
+  streamed chunk); still open — replies streaming AFTER the panel is disposed are dropped (the
+  turn sink lives on the panel), and other per-review UI state (scroll positions, expanded cards)
+  still resets. **Also 0.4.2:** Ctrl+wheel prose zoom over the review pane (`DocentUi.fontScale`,
+  persisted; IdeEventQueue dispatcher; embedded diff editors excluded — they keep the IDE's own
+  zoom). **Done in 0.3.2 (built, not yet click-tested):** T1 — a ~2.5-min liveness
   timeout on every posted remark replaces the infinite spinner with a "Docent isn't responding"
   notice + a **Nudge** link (re-pushes the retained event into the agent's chat via the notifier;
   a late reply still lands); T2 — `awb/DocentSeamCheck` verifies every reflectively-reached AWB
   seam once per IDE run and raises a balloon (new `Code Review Docent` notification group) listing
   what a workbench update broke, and seam-installation failures in `DocentWorkbenchSetup` now
   notify instead of being swallowed.
-- `CODEX_MCP_SERVER_NAME` is hardcoded to `rider` — must match the user's `~/.codex/config.toml`;
-  make it a setting for non-Rider IDEs.
+- `CODEX_MCP_SERVER_NAME` (`rider`) is now defensive-only (0.4.0 injects Docent's own `docent`
+  MCP entry, so tool visibility no longer depends on the user's `~/.codex/config.toml`) — it just
+  patches the timeout on the user entry when one exists under that name; a setting would still be
+  cleaner for non-Rider IDEs.
 - Comments on unchanged/folded lines in unified sit inside a collapsed context block until expanded.
 - Multi-line comment ranges, and pinning a comment to the **before** side.
 - Junie / OpenCode providers (no confirmed MCP path + delivery mode yet).

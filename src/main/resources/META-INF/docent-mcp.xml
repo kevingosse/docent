@@ -4,4 +4,10 @@
     <extensions defaultExtensionNs="com.intellij.mcpServer">
         <mcpToolset implementation="com.kevingosse.docent.mcp.DocentMcpToolset"/>
     </extensions>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- First-run guard: warns (with a one-click fix) when the MCP server setting is off, because
+             then agents silently never see the docent tools. Lives here, not in plugin.xml: with the
+             MCP plugin absent there is no setting to flip — the nav panel covers that case. -->
+        <postStartupActivity implementation="com.kevingosse.docent.mcp.DocentMcpPrereqActivity"/>
+    </extensions>
 </idea-plugin>

@@ -14,7 +14,6 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.trail.Section
 import java.awt.BorderLayout
@@ -66,16 +65,21 @@ class SectionConversationPanel(
         rows = 2
         lineWrap = true
         wrapStyleWord = true
-        font = UIUtil.getLabelFont()
+        font = DocentUi.proseFont()
         emptyText.text = "Ask the Docent about this section — Enter to send, Shift+Enter for a new line"
         border = JBUI.Borders.empty(4, 6)
     }
     private val sendButton = JButton("Send")
 
+    private val controller = DocentReviewController.getInstance(project)
+
     private var backend: DocentConversationBackend? = null
     @Volatile private var disposed = false
     private var busy = false
     private var streaming: DocentBubble? = null
+
+    /** Index of the in-flight reply's entry in the controller's durable history (created on first chunk). */
+    private var streamingEntryIndex: Int? = null
 
     /** The in-transcript "Docent is thinking…" row while a reply is in flight (removed on the first chunk). */
     private var thinking: DocentUi.ThinkingRow? = null
@@ -139,6 +143,17 @@ class SectionConversationPanel(
 
         // The section narration is the Docent's opening message; the discussion flows on from it.
         transcript.add(docentCard(DocentUi.htmlPane(section.narration)))
+        // Replay this section's conversation from the controller's durable history (F1): this panel is
+        // rebuilt from scratch on every section switch, so without the replay the chat only APPEARS while
+        // its section stays selected. Replayed Docent entries render through the same markup path as live
+        // ones. (A reply still in flight when the reviewer navigated away is not replayed — its entry is
+        // whatever chunks landed before the panel died.)
+        controller.chatHistory(sectionIndex).forEach { entry ->
+            when (entry.role) {
+                DocentReviewController.ChatRole.USER -> transcript.add(userBubble(entry.text))
+                DocentReviewController.ChatRole.DOCENT -> transcript.add(docentCard(DocentUi.markupPane(entry.text)))
+            }
+        }
         applyConnectionState()
         onInputChanged()
         SwingUtilities.invokeLater { transcript.scrollRectToVisible(Rectangle(0, 0, 1, 1)) }
@@ -175,10 +190,12 @@ class SectionConversationPanel(
         if (text.isEmpty()) return
         input.text = ""
         removeStalled()
+        controller.recordChatEntry(sectionIndex, DocentReviewController.ChatEntry(DocentReviewController.ChatRole.USER, text))
         addUserBubble(text)
         busy = true
         sendButton.isEnabled = false
         streaming = null
+        streamingEntryIndex = null
         thinking = DocentUi.ThinkingRow().also { transcript.add(it) }
         refreshTranscript()
         backend().send(text, turn)
@@ -200,6 +217,14 @@ class SectionConversationPanel(
             removeStalled() // a late reply after the liveness notice: the Docent is alive after all
             val b = streaming ?: DocentBubble().also { streaming = it; transcript.add(docentCard(it)) }
             b.append(t)
+            // Mirror the reply into the durable history as it streams: recorded per chunk (create the
+            // entry on the first, update it after), so the history is current even if this panel dies
+            // before onDone (navigation mid-reply).
+            val idx = streamingEntryIndex ?: controller.recordChatEntry(
+                sectionIndex,
+                DocentReviewController.ChatEntry(DocentReviewController.ChatRole.DOCENT, ""),
+            ).also { streamingEntryIndex = it }
+            controller.updateChatEntry(sectionIndex, idx, b.text())
             refreshTranscript()
         }
         override fun onStatus(t: String) = onEdt { thinking?.setText(t.ifBlank { "Docent is thinking…" }) }
@@ -215,6 +240,7 @@ class SectionConversationPanel(
         busy = false
         removeThinking()
         streaming = null
+        streamingEntryIndex = null
         onInputChanged()
         refreshTranscript()
     }
@@ -297,33 +323,34 @@ class SectionConversationPanel(
     /** The reviewer's message: a green "You" over plain wrapping text — deliberately lighter than the
      *  Docent's cards, so the two voices scan apart at a glance. */
     private fun addUserBubble(text: String) {
-        transcript.add(
-            JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(2, 6)
-                add(
-                    JBLabel("You").apply {
-                        font = font.deriveFont(Font.BOLD)
-                        foreground = DocentUi.REVIEWER
-                        border = JBUI.Borders.emptyBottom(2)
-                    },
-                    BorderLayout.NORTH,
-                )
-                add(
-                    JBTextArea(text).apply {
-                        isEditable = false
-                        isOpaque = false
-                        lineWrap = true
-                        wrapStyleWord = true
-                        border = null
-                        font = UIUtil.getLabelFont()
-                    },
-                    BorderLayout.CENTER,
-                )
-            },
-        )
+        transcript.add(userBubble(text))
         refreshTranscript()
     }
+
+    private fun userBubble(text: String): JComponent =
+        JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 6)
+            add(
+                JBLabel("You").apply {
+                    font = DocentUi.scaled(font).deriveFont(Font.BOLD)
+                    foreground = DocentUi.REVIEWER
+                    border = JBUI.Borders.emptyBottom(2)
+                },
+                BorderLayout.NORTH,
+            )
+            add(
+                JBTextArea(text).apply {
+                    isEditable = false
+                    isOpaque = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    border = null
+                    font = DocentUi.proseFont()
+                },
+                BorderLayout.CENTER,
+            )
+        }
 
     private fun addSystem(text: String) {
         transcript.add(
@@ -333,7 +360,7 @@ class SectionConversationPanel(
                 lineWrap = true
                 wrapStyleWord = true
                 border = JBUI.Borders.empty(2, 6)
-                font = UIUtil.getLabelFont().deriveFont(Font.ITALIC)
+                font = DocentUi.proseFont().deriveFont(Font.ITALIC)
                 foreground = JBColor.GRAY
             },
         )
@@ -346,7 +373,7 @@ class SectionConversationPanel(
             border = JBUI.Borders.empty(8, 10)
             add(
                 JBLabel("Docent", DocentUi.ICON, SwingConstants.LEADING).apply {
-                    font = font.deriveFont(Font.BOLD)
+                    font = DocentUi.scaled(font).deriveFont(Font.BOLD)
                     foreground = DocentUi.DOCENT
                     iconTextGap = JBUI.scale(6)
                     border = JBUI.Borders.emptyBottom(4)
@@ -380,7 +407,7 @@ class SectionConversationPanel(
             isEditable = false
             isOpaque = false
             border = null
-            font = UIUtil.getLabelFont()
+            font = DocentUi.proseFont()
         }
         private val buffer = StringBuilder()
 
@@ -388,6 +415,9 @@ class SectionConversationPanel(
             isOpaque = false
             add(pane, BorderLayout.CENTER)
         }
+
+        /** The full raw reply so far — mirrored into the controller's durable chat history per chunk. */
+        fun text(): String = buffer.toString()
 
         fun append(t: String) {
             buffer.append(t)

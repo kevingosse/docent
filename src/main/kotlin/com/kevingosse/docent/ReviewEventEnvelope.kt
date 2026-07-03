@@ -23,12 +23,16 @@ object ReviewEventEnvelope {
                 o.addProperty("queuedChanges", event.text.ifBlank { "(none)" })
                 o.addProperty(
                     "hint",
-                    if (monitor)
+                    (if (monitor)
                         "The reviewer finished. Your watch has now exited. Implement the queued changes (you may " +
-                            "edit files), then stop."
+                            "edit files)."
                     else
-                        "The reviewer finished. Implement the queued changes now (you may edit files), then stop " +
-                            "calling docent_await_event.",
+                        "The reviewer finished. Implement the queued changes now (you may edit files) and stop " +
+                            "calling docent_await_event.") +
+                        " As you implement each one, record a docent_record_decision (with your sessionToken) " +
+                        "citing what the reviewer asked and how you addressed it — especially where you deviated. " +
+                        "That makes the follow-up delta reviewable the same way. When done, tell the user the " +
+                        "requested changes are ready to review; do NOT finalize a trail on your own.",
                 )
             }
 

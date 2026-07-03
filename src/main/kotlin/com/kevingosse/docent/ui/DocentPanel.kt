@@ -6,6 +6,7 @@ import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.diff.util.DiffUserDataKeys
 import com.intellij.diff.util.Side
 import com.intellij.icons.AllIcons
+import com.intellij.ide.IdeEventQueue
 import com.intellij.ide.ui.laf.darcula.ui.DarculaButtonUI
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -35,10 +36,12 @@ import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.MouseWheelEvent
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
  * The review surface (docs/DESIGN.md §9), hosted in the editor (middle) pane. Navigation lives in the left
@@ -101,6 +104,34 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
                 ) render()
             }
         })
+        // Ctrl+wheel over the review pane zooms the prose (reviewer request 2026-07-03). Dispatched at the
+        // IdeEventQueue level because the transcript/overview scroll panes consume wheel events before this
+        // panel's own listeners would ever see them; the dispatcher returning true swallows the event so it
+        // doesn't also scroll. Scoped to this panel minus the embedded diff — real editors keep the IDE's
+        // own Ctrl+wheel zoom. Auto-removed when this panel is disposed (the Disposable parent).
+        IdeEventQueue.getInstance().addDispatcher(
+            IdeEventQueue.EventDispatcher { e -> e is MouseWheelEvent && e.isControlDown && handleFontZoom(e) },
+            this,
+        )
+    }
+
+    /** True = consume the event. Prose zoom re-applies by rebuilding the current surface (fonts and HTML
+     *  wrap heights are baked in at build time — same full-rebuild pattern as [onConnectionChanged]). */
+    private fun handleFontZoom(e: MouseWheelEvent): Boolean {
+        if (e.wheelRotation == 0) return false
+        // At the IdeEventQueue stage the event's component is still the top-level window — Swing only
+        // retargets to the component under the cursor later, in the LightweightDispatcher. Resolve the
+        // deepest component ourselves or isDescendingFrom(window, this) is false everywhere.
+        val source = e.component ?: return false
+        val comp = SwingUtilities.getDeepestComponentAt(source, e.x, e.y) ?: return false
+        if (!SwingUtilities.isDescendingFrom(comp, this)) return false
+        if (diffHost?.let { SwingUtilities.isDescendingFrom(comp, it) } == true) return false
+        if (DocentUi.adjustFontScale(-e.wheelRotation)) {
+            disposeSection()
+            renderedSectionIndex = Int.MIN_VALUE
+            render()
+        }
+        return true // at the bounds: still swallow, so the gesture never scrolls the transcript
     }
 
     override fun onModelChanged() {
@@ -195,7 +226,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
 
         // Title block: the subject, then a derived scope line — the "instinctive scope" of DESIGN §9.
         column.add(JBLabel("<html><div style='width:${contentWidth}px'>${DocentUi.escapeHtml(j.subject)}</div></html>").apply {
-            font = JBFont.h1()
+            font = DocentUi.scaled(JBFont.h1())
             alignmentX = Component.LEFT_ALIGNMENT
         })
         column.add(JBLabel(scopeLineHtml(j, contentWidth)).apply {
@@ -216,7 +247,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         // The route: one card per section — the book's table of contents.
         if (j.sections.isNotEmpty()) {
             column.add(JBLabel("THE ROUTE").apply {
-                font = JBUI.Fonts.smallFont()
+                font = DocentUi.scaled(JBUI.Fonts.smallFont())
                 foreground = JBColor.GRAY
                 alignmentX = Component.LEFT_ALIGNMENT
                 border = JBUI.Borders.empty(18, 0, 6, 0)
@@ -273,7 +304,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         val badge =
             if (visited) JBLabel(AllIcons.Actions.Commit)
             else JBLabel("${index + 1}").apply {
-                font = JBFont.h3()
+                font = DocentUi.scaled(JBFont.h3())
                 foreground = DocentUi.DOCENT
             }
         val west = JPanel(GridBagLayout()).apply {
@@ -296,7 +327,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
                 alignmentX = Component.LEFT_ALIGNMENT
             })
             add(JBLabel(meta).apply {
-                font = JBUI.Fonts.smallFont()
+                font = DocentUi.scaled(JBUI.Fonts.smallFont())
                 foreground = JBColor.GRAY
                 alignmentX = Component.LEFT_ALIGNMENT
                 border = JBUI.Borders.emptyTop(2)
@@ -394,11 +425,11 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
                 isOpaque = false
                 layout = BoxLayout(this, BoxLayout.X_AXIS)
                 add(JBLabel("Section ${sectionIndex + 1} of ${j.sections.size}").apply {
-                    font = JBUI.Fonts.smallFont()
+                    font = DocentUi.scaled(JBUI.Fonts.smallFont())
                     foreground = JBColor.GRAY
                 })
                 add(javax.swing.Box.createHorizontalStrut(JBUI.scale(10)))
-                add(JBLabel(section.headline).apply { font = JBFont.label().asBold() })
+                add(JBLabel(section.headline).apply { font = DocentUi.scaled(JBFont.label().asBold()) })
             },
             BorderLayout.CENTER,
         )

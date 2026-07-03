@@ -1,5 +1,6 @@
 package com.kevingosse.docent.ui
 
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ColorUtil
@@ -76,15 +77,49 @@ object DocentUi {
     /** The Docent glyph (the tool-window icon), reused as its avatar wherever it speaks. */
     val ICON: Icon by lazy { IconLoader.getIcon("/icons/docent.svg", DocentUi::class.java) }
 
+    // ---- reviewer font zoom (Ctrl+wheel over the review pane) --------------------------------------
+
+    private const val FONT_SCALE_KEY = "docent.ui.fontScale"
+    private const val FONT_SCALE_MIN = 0.7f
+    private const val FONT_SCALE_MAX = 2.0f
+
+    /**
+     * Persisted zoom factor for the review's prose (thesis, narration, chat, comment cards). The embedded
+     * diff/code editors are real editors with the IDE's own Ctrl+wheel zoom — this covers everything that
+     * ISN'T one, which otherwise renders at a fixed label-font size the reviewer can't adjust. Every prose
+     * font in the kit must go through [proseFont]/[scaled]/[wrapHtml] so one factor scales all the voices
+     * together; a change re-applies on the next (re)build of a surface, so callers force a rebuild.
+     */
+    var fontScale: Float
+        get() = PropertiesComponent.getInstance().getFloat(FONT_SCALE_KEY, 1f).coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX)
+        set(value) = PropertiesComponent.getInstance().setValue(FONT_SCALE_KEY, value.coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX), 1f)
+
+    /** Step the zoom (wheel notches); returns false at the bounds (nothing changed, no rebuild needed). */
+    fun adjustFontScale(steps: Int): Boolean {
+        val old = fontScale
+        val new = (old + steps * 0.1f).coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX)
+        if (kotlin.math.abs(new - old) < 0.001f) return false
+        fontScale = new
+        return true
+    }
+
+    /** [font] at the current [fontScale]. */
+    fun scaled(font: Font): Font =
+        fontScale.let { if (it == 1f) font else font.deriveFont(font.size2D * it) }
+
+    /** The kit's prose font: the IDE label font at the current zoom. */
+    fun proseFont(): Font = scaled(UIUtil.getLabelFont())
+
     // ---- HTML (rich prose: trail narration / thesis) -----------------------------------------------
 
     /** Wrap agent-authored HTML in the label font + theme colors; [maxWidthPx] > 0 constrains the measure. */
     fun wrapHtml(body: String, maxWidthPx: Int = 0, foreground: Color? = null): String {
         val f = JBUI.Fonts.label()
+        val size = String.format(java.util.Locale.ROOT, "%.1f", f.size2D * fontScale)
         val fg = ColorUtil.toHtmlColor(foreground ?: JBColor.foreground())
         val width = if (maxWidthPx > 0) "width:${maxWidthPx}px;" else ""
         return "<html><head><style>" +
-            "body{font-family:'${f.family}';font-size:${f.size}pt;color:$fg;margin:0;padding:0;$width}" +
+            "body{font-family:'${f.family}';font-size:${size}pt;color:$fg;margin:0;padding:0;$width}" +
             "p{margin:0 0 10px 0;} ul{margin:0 0 10px 18px;padding:0;} li{margin:0 0 6px 0;}" +
             "code{font-family:monospace;}" +
             "</style></head><body>$body</body></html>"
@@ -160,7 +195,7 @@ object DocentUi {
         isEditable = false
         isOpaque = false
         border = null
-        font = UIUtil.getLabelFont()
+        font = proseFont()
         appendMarkup(styledDocument, text)
     }
 
@@ -350,7 +385,7 @@ object DocentUi {
             isOpaque = false
             lineWrap = true
             wrapStyleWord = true
-            font = UIUtil.getLabelFont()
+            font = proseFont()
         }
 
         override fun getPreferredSize(): Dimension {

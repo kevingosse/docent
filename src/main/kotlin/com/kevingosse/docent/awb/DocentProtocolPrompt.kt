@@ -68,7 +68,9 @@ internal object DocentProtocolPrompt {
             the event id in the JSON). If they request a change, also call docent_queue_change and acknowledge it
             briefly ("queued") — do NOT edit files yet.
           - a "review_completed" event: the reviewer is done; the watch exits itself. Implement the queued
-            changes now (editing is allowed), then stop.
+            changes now (editing is allowed), recording a docent_record_decision per implemented request (what
+            the reviewer asked, how you addressed it). Then tell the user the changes are ready for a follow-up
+            review — the user starts it; do NOT finalize on your own.
         Do NOT block on docent_await_event when you have a watch command — the file watch is the inbound path.
     """.trimIndent()
 
@@ -81,7 +83,9 @@ internal object DocentProtocolPrompt {
             the event id in the JSON). If they request a change, also call docent_queue_change and acknowledge it
             briefly ("queued") — do NOT edit files yet. Then call docent_await_event again.
           - a "review_completed" envelope: the reviewer is done. Implement the queued changes now (editing is
-            allowed), then stop.
+            allowed), recording a docent_record_decision per implemented request (what the reviewer asked, how
+            you addressed it). Then tell the user the changes are ready for a follow-up review — the user
+            starts it; do NOT finalize on your own.
         Keep calling docent_await_event after every event until review_completed. If the call ever returns a
         timeout/error before an event (a quiet review), that's expected — simply call it again.
     """.trimIndent()

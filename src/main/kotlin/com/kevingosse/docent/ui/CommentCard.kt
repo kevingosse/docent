@@ -7,7 +7,6 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
@@ -295,7 +294,7 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
 
     private fun authorLabel(author: String) =
         JBLabel(if (author.equals("docent", true)) "Docent" else "You").apply {
-            font = font.deriveFont(Font.BOLD)
+            font = DocentUi.scaled(font).deriveFont(Font.BOLD)
             if (author.equals("docent", true)) {
                 foreground = DocentUi.DOCENT
                 icon = DocentUi.ICON
@@ -325,7 +324,7 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         rows = 2
         lineWrap = true
         wrapStyleWord = true
-        font = UIUtil.getLabelFont()
+        font = DocentUi.proseFont()
         emptyText.text = placeholder
         border = BorderFactory.createCompoundBorder(
             JBUI.Borders.customLine(JBColor.border(), 1),
