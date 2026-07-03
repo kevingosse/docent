@@ -3,6 +3,10 @@
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij.mcpServer">
         <mcpToolset implementation="com.kevingosse.docent.mcp.DocentMcpToolset"/>
+        <!-- Hide the docent tools from the IDE's PUBLIC (globally-registered) MCP server — they must only
+             travel on the private DocentMcpEndpoint. Without this, agents running outside this IDE see the
+             docent tools and could drive the wrong docent instance. See DocentToolExclusionProvider. -->
+        <mcpToolFilterProvider implementation="com.kevingosse.docent.mcp.DocentToolExclusionProvider"/>
     </extensions>
     <extensions defaultExtensionNs="com.intellij">
         <!-- First-run guard: warns (with a one-click fix) when the MCP server setting is off, because

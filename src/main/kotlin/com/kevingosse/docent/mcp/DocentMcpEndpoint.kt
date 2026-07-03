@@ -82,10 +82,17 @@ class DocentMcpEndpoint(private val cs: CoroutineScope) {
      * `fullyQualifiedName` (= toolset class + "." + method), not the bare `docent_*` tool name.
      * (Implementing the sealed `McpToolFilter` directly isn't possible outside its module;
      * `TextMcpToolFilter` is the extension point left open for that.)
+     *
+     * Also serves as the private session's *identity marker*: [DocentToolExclusionProvider] recognizes
+     * this filter instance to know "this is the docent-only endpoint" and leave its tools untouched,
+     * while hiding them from every other (public) session. Hence `internal`, not `private`.
      */
-    private object DocentToolsOnly : McpToolFilter.TextMcpToolFilter {
+    internal object DocentToolsOnly : McpToolFilter.TextMcpToolFilter {
         override fun shouldInclude(toolName: String): Boolean =
             toolName.startsWith("com.kevingosse.docent.")
+
+        /** FQN prefix of every docent tool (toolset class + "." + method), shared with the exclusion provider. */
+        const val TOOL_FQN_PREFIX = "com.kevingosse.docent."
     }
 
     companion object {
