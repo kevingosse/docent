@@ -1,6 +1,7 @@
 package com.kevingosse.docent.awb
 
 import com.intellij.platform.ai.agent.core.session.AgentSessionProvider
+import com.intellij.platform.ai.agent.sessions.core.launch.McpStreamUrlProvider
 import com.intellij.platform.ai.agent.sessions.core.launch.AgentSessionLaunchContributor
 import com.intellij.platform.ai.agent.sessions.core.providers.AgentSessionTerminalLaunchSpec
 import com.intellij.openapi.diagnostic.logger
@@ -8,6 +9,7 @@ import com.intellij.openapi.project.ProjectManager
 import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.deliveryModeForProvider
+import com.kevingosse.docent.mcp.DocentMcpEndpoint
 
 /**
  * Injects the [DocentProtocolPrompt] into a workbench-launched agent's system/base instructions, so the
@@ -18,8 +20,10 @@ import com.kevingosse.docent.deliveryModeForProvider
  * gated `docent-awb.xml`), mirroring the bundled `AwbMcpConfigContributor`. Fires on every new and resumed
  * launch; returns the [launchSpec] unchanged for any provider we don't (yet) handle.
  *
- * The `docent_*` tools are reachable by a workbench-launched **Claude** agent via the user's `.mcp.json`
- * (the ij-proxy stdio path), so Claude needs only the instruction; no extra MCP plumbing here.
+ * For **Claude** we also guarantee the `docent_*` tools are reachable with zero user setup: the launch
+ * gets an extra `--mcp-config` with an inline JSON entry pointing at the IDE's current MCP URL (see
+ * [injectDocentMcpConfig]). Additive on purpose — no `--strict-mcp-config`, no AWB registry keys — so the
+ * user's own global/project MCP config keeps working exactly as before.
  */
 internal class DocentLaunchContributor : AgentSessionLaunchContributor {
 
@@ -45,12 +49,15 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
                     val threadId = resolveThreadId(sessionId, launchSpec)
                     registerPushTarget(projectPath, provider)
                     LOG.info("Docent: Claude launch — injecting Docent protocol (Monitor delivery, thread=$threadId)")
-                    launchSpec.copy(command = injectClaudeSystemPrompt(launchSpec.command, threadId))
+                    launchSpec.copy(
+                        command = injectDocentMcpConfig(injectClaudeSystemPrompt(launchSpec.command, threadId), resolveDocentMcp()),
+                    )
                 }
 
-                // Codex CAN reach the docent_* tools: the workbench doesn't pass it --mcp-config, but the user's
-                // Codex config registers the IDE's streamable-HTTP MCP server (see CODEX_MCP_SERVER_NAME), so the
-                // tools are visible. Two differences from Claude, both handled in injectCodexConfig:
+                // Codex gets the docent_* tools the same zero-setup way as Claude: injectCodexConfig registers
+                // Docent's own MCP entry via `-c mcp_servers.docent.url=<IDE URL>` (a dotted -c path CREATES the
+                // entry), additive to whatever the user's ~/.codex/config.toml wires. Two differences from
+                // Claude, both handled in injectCodexConfig:
                 //  1) No --append-system-prompt. The ambient-instruction analog is `-c developer_instructions=…`
                 //     (verified: lands as a developer message, non-destructive). So we inject the protocol there.
                 //  2) No background-watch tool → Codex BLOCKS on docent_await_event (DeliveryMode.AWAIT). Codex's
@@ -61,7 +68,7 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
                     val threadId = resolveThreadId(sessionId, launchSpec)
                     registerPushTarget(projectPath, provider)
                     LOG.info("Docent: Codex launch — injecting Docent protocol (await delivery, thread=$threadId)")
-                    launchSpec.copy(command = injectCodexConfig(launchSpec.command, threadId))
+                    launchSpec.copy(command = injectCodexConfig(launchSpec.command, threadId, resolveDocentMcp()))
                 }
 
                 else -> launchSpec
@@ -102,23 +109,82 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
     }
 
     /**
-     * Inject the Codex equivalents of Claude's launch knobs (see the CODEX branch in [contribute]). Two `-c`
+     * Inject the Codex equivalents of Claude's launch knobs (see the CODEX branch in [contribute]). `-c`
      * config overrides, inserted before the `--` prompt separator (tokens after `--` are the initial message):
      *  - `developer_instructions=<await protocol>` — the ambient-instruction analog of `--append-system-prompt`.
      *    The value is a raw multi-line string; Codex parses a `-c` value as TOML and falls back to the literal
      *    when that fails, so the protocol text passes through verbatim (no quoting needed). We always set our
      *    own (the workbench injects none), so there's nothing to merge.
-     *  - `mcp_servers.<CODEX_MCP_SERVER_NAME>.tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` — lifts the 60s default
-     *    that would otherwise kill a blocking docent_await_event.
+     *  - `mcp_servers.$DOCENT_MCP_NAME.url=<endpoint URL>` (+ `.http_headers.<auth header>` when [mcp] is
+     *    the authenticated docent-only endpoint) — Codex's analog of Claude's injected `--mcp-config`: a
+     *    dotted `-c` path CREATES the server entry (verified with `codex -c mcp_servers.docent.url=… mcp
+     *    list`; `http_headers` verified the same way), so the `docent_*` tools are visible with zero user
+     *    config, additively to whatever `~/.codex/config.toml` already registers.
+     *  - `tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` on BOTH our entry and the user's
+     *    [CODEX_MCP_SERVER_NAME] one — lifts the 60s default that would otherwise kill a blocking
+     *    docent_await_event. The user's entry (when present) also exposes the docent tools, and we can't
+     *    control which entry Codex resolves a docent_* call through, so both must survive a quiet await.
      */
-    private fun injectCodexConfig(command: List<String>, threadId: String?): List<String> {
+    private fun injectCodexConfig(command: List<String>, threadId: String?, mcp: DocentMcpTarget?): List<String> {
         val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.AWAIT, threadId))
-        val extra = listOf(
+        val extra = mutableListOf(
             "-c", "mcp_servers.$CODEX_MCP_SERVER_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
             "-c", "developer_instructions=$protocol",
         )
+        if (mcp != null) {
+            extra += listOf(
+                "-c", "mcp_servers.$DOCENT_MCP_NAME.url=${mcp.url}",
+                "-c", "mcp_servers.$DOCENT_MCP_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
+            )
+            if (mcp.headerName != null) {
+                extra += listOf("-c", "mcp_servers.$DOCENT_MCP_NAME.http_headers.${mcp.headerName}=${mcp.headerValue}")
+            }
+        }
         val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
         return command.toMutableList().apply { addAll(insertAt, extra) }
+    }
+
+    /** Where an injected `docent` MCP entry should point: URL + the auth header the endpoint requires
+     *  (header null on the public-server fallback, which is unauthenticated). */
+    private data class DocentMcpTarget(val url: String, val headerName: String?, val headerValue: String?)
+
+    /**
+     * Resolve the target for the injected `docent` entry, preferring the **docent-only endpoint**
+     * ([DocentMcpEndpoint]: the IDE's private MCP server, filtered to just the `docent_*` tools, running
+     * regardless of the user-facing "Enable MCP server" setting). Pointing agents at the PUBLIC IDE server
+     * instead would expose its full ~119-tool surface — duplicated wholesale when the user's own client
+     * config already registers that server, and confusing for the agent (every tool visible twice).
+     * The public URL remains only as a fallback when arming the endpoint fails (e.g. the MCP plugin's
+     * private-server API changed), and null (skip injection) when even that is unavailable — the nav
+     * panel / startup balloon surface that state.
+     */
+    private suspend fun resolveDocentMcp(): DocentMcpTarget? {
+        runCatching { DocentMcpEndpoint.getInstance().endpoint() }
+            .onFailure { LOG.warn("Docent: docent-only MCP endpoint unavailable", it) }
+            .getOrNull()
+            ?.let { return DocentMcpTarget(it.url, it.headerName, it.headerValue) }
+        return McpStreamUrlProvider.resolve()?.let { DocentMcpTarget(it, null, null) }
+            .also { if (it == null) LOG.info("Docent: no IDE MCP URL at all — launching without docent MCP entry") }
+    }
+
+    /**
+     * Append `--mcp-config` with an inline JSON entry pointing at [mcp] (the docent-only endpoint, normally),
+     * so the `docent_*` tools are visible to the spawned Claude even on a machine with no MCP client config
+     * at all. Claude's `--mcp-config <configs...>` accepts JSON strings and merges with every other MCP
+     * source as long as `--strict-mcp-config` isn't passed — so this is purely additive: a user's own wiring
+     * (e.g. the global entry the workbench's "set up MCP" notification writes) keeps working. Unlike a
+     * config-file entry, the URL + token are resolved fresh at every launch, so they can't go stale.
+     *
+     * Skipped when the command already carries `--strict-mcp-config` (the workbench's own managed wiring —
+     * the `agent.workbench.mcp.use.direct.http` registry key — is active and already points at this IDE;
+     * a second config would be ignored-or-merged unpredictably under strict semantics).
+     */
+    private fun injectDocentMcpConfig(command: List<String>, mcp: DocentMcpTarget?): List<String> {
+        if (mcp == null || command.contains("--strict-mcp-config")) return command
+        val headers = mcp.headerName?.let { ""","headers":{"$it":"${mcp.headerValue}"}""" } ?: ""
+        val json = """{"mcpServers":{"$DOCENT_MCP_NAME":{"type":"http","url":"${mcp.url}"$headers}}}"""
+        val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
+        return command.toMutableList().apply { addAll(insertAt, listOf("--mcp-config", json)) }
     }
 
     /**
@@ -190,12 +256,16 @@ internal class DocentLaunchContributor : AgentSessionLaunchContributor {
     companion object {
         private val LOG = logger<DocentLaunchContributor>()
 
+        /** The server name Docent injects for its own per-launch IDE-MCP entry (Claude `--mcp-config` /
+         *  Codex `-c mcp_servers.<name>.url`). Tool visibility never depends on the user's own config. */
+        private const val DOCENT_MCP_NAME = "docent"
+
         /**
-         * The MCP server name, in the user's Codex config, that points at THIS IDE's MCP server (the one that
-         * publishes the docent_* tools) — we patch its `tool_timeout_sec` on the Codex command line. Unlike
-         * Claude (whose merged config the workbench generates), the workbench leaves Codex's MCP config to the
-         * user, so this must match their `~/.codex/config.toml` entry (`[mcp_servers.<name>] url = …/stream`).
-         * On this box that entry is named `rider`. TODO: surface as a setting once we support non-Rider IDEs.
+         * The MCP server name a user's own `~/.codex/config.toml` typically gives THIS IDE's MCP server
+         * (`[mcp_servers.<name>] url = …/stream`) — we defensively patch its `tool_timeout_sec` on the Codex
+         * command line, because Codex may resolve a docent_* call through that entry rather than our injected
+         * [DOCENT_MCP_NAME] one (both expose the same tools). Wrong-or-absent is harmless now that the
+         * injected entry guarantees visibility; on this box the user entry is named `rider`.
          */
         private const val CODEX_MCP_SERVER_NAME = "rider"
 

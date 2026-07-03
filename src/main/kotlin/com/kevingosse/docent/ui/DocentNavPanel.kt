@@ -27,6 +27,8 @@ import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.ReviewEvent
 import com.kevingosse.docent.SessionLaunchOption
 import com.kevingosse.docent.deliveryModeForProvider
+import com.kevingosse.docent.mcp.McpPrereq
+import com.kevingosse.docent.mcp.McpPrereqStatus
 import com.kevingosse.docent.trail.Anchor
 import com.kevingosse.docent.trail.Section
 import java.awt.BorderLayout
@@ -277,6 +279,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             return
         }
 
+        mcpPrereqRows().forEach { planList.add(it) }
+
         val service = DocentReviewService.getInstance(project)
         val directory = service.sessionDirectory
         val workbenchReady = directory != null && service.eventNotifier != null
@@ -342,6 +346,33 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
             .forEach { planList.add(it) }
         planList.add(loadTrailLink())
+    }
+
+    /**
+     * The Docent's one hard prerequisite, surfaced where a first-time user actually looks. When the IDE's
+     * MCP server is off, agents launch and work normally but never see the `docent_*` tools — nothing gets
+     * recorded and this surface stays empty forever with no hint why. So the hint (and the one-click fix)
+     * lives at the top of the empty surface itself, not only in a dismissable startup balloon.
+     */
+    private fun mcpPrereqRows(): List<JComponent> = when (McpPrereq.status()) {
+        McpPrereqStatus.OK -> emptyList()
+        McpPrereqStatus.DISABLED -> listOf(
+            noticeRow(
+                "Docent's MCP endpoint isn't available and the IDE's MCP server is turned off — coding " +
+                    "agents can't reach the Docent, so no decisions get recorded and reviews can't run. " +
+                    "(Agent sessions launched before the fix need to be relaunched afterwards.)",
+            ),
+            actionLinkRow("Turn on the MCP server") {
+                McpPrereq.enableAndStart()
+                refreshList()
+            },
+        )
+        McpPrereqStatus.UNAVAILABLE -> listOf(
+            noticeRow(
+                "This IDE doesn't have the MCP Server plugin, which the Docent needs to talk to coding " +
+                    "agents. You can still open saved trails; live agent features won't work here.",
+            ),
+        )
     }
 
     /**

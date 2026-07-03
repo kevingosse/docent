@@ -79,7 +79,8 @@ class DocentMcpToolset : McpToolset {
         |file. (If you were given a watch command, use THAT; this tool will just sit idle.) Envelopes:
         |  - {"event":"message"|"comment", "id", ...}: answer with docent_reply using the same id; if they ask
         |    for a change, also call docent_queue_change, then call this tool again.
-        |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes.
+        |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes,
+        |    recording a docent_record_decision per implemented request so the delta can be reviewed next.
         |It blocks until something is pending (no server-side timeout); keep calling it after each event until
         |review_completed. If a call returns a timeout/error before any event (a quiet review outlasted your MCP
         |client's tool timeout), that's expected — just call it again; the review is not over.
@@ -223,7 +224,9 @@ class DocentMcpToolset : McpToolset {
             appendLine("    a change, also call docent_queue_change(...) and acknowledge it briefly (\"queued\") — do NOT")
             appendLine("    edit files yet, and don't pre-describe the implementation.")
             appendLine("  - a \"review_completed\" event: the reviewer is done. NOW implement the queued changes")
-            appendLine("    (editing is allowed), then stop.")
+            appendLine("    (editing is allowed), recording a docent_record_decision per implemented request (what")
+            appendLine("    the reviewer asked, how you addressed it) so the delta is reviewable the same way. Then")
+            appendLine("    tell the user the changes are ready for a follow-up review; do NOT finalize on your own.")
             appendLine()
             if (monitor) {
                 appendLine("Start the Monitor watch now, then end your turn — each printed line arrives as a new message for")

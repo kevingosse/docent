@@ -1,0 +1,296 @@
+{
+  "subject": "First-wave release polish: Docent\u0027s own MCP endpoint, zero-setup agent wiring, follow-up-review loop",
+  "thesis": "Release-day pass with one goal: \u003cb\u003ea new user must succeed on the first try\u003c/b\u003e. The heart of the change is the MCP story, which went through three designs in a day — each killed by a fact we verified along the way. It started as \"warn when the IDE MCP server is off\", became \"flip Agent Workbench\u0027s hidden auto-wiring key\" (rejected: unexposed default with unknown blast radius), then \"inject an additive \u003ccode\u003e--mcp-config\u003c/code\u003e pointing at the public IDE server\" (rejected: 119 tools, duplicated wholesale when the user\u0027s own config already registers that server), and landed on \u003cb\u003eDocent\u0027s own MCP endpoint\u003c/b\u003e: the IDE\u0027s \u003ci\u003eprivate\u003c/i\u003e MCP server, auth-token protected, filtered to exactly the 8 \u003ccode\u003edocent_*\u003c/code\u003e tools — and independent of the user-facing \"Enable MCP server\" setting, which is therefore no longer a prerequisite at all. Around it: both providers (Claude \u003ci\u003eand\u003c/i\u003e Codex, both mechanisms verified against the live CLIs) get the endpoint injected per launch with zero user config; the post-review gray area gets a v1 loop that reuses the existing on-demand machinery; CI is anchored on a reproducible EAP; and the README now speaks to a first-time user. Everything compiles and builds at 0.4.1, but the new launch wiring has \u003cb\u003enot yet been click-tested\u003c/b\u003e in a live IDE — that\u0027s the reviewer\u0027s biggest lever here.",
+  "sections": [
+    {
+      "headline": "Docent gets its own MCP endpoint — 8 tools, own port, no prerequisites",
+      "narration": "The silent first-run failure: on a fresh machine, a workbench-launched agent never sees the \u003ccode\u003edocent_*\u003c/code\u003e tools — nothing is recorded, the panel stays empty, no error anywhere in \u003ci\u003eour\u003c/i\u003e surfaces. (Agent Workbench does offer its own \"set up MCP\" bubble, but it writes a user-level client config entry with a baked-in port — manual, per-user, per-client, and Docent itself gave no hint.) The fix is a dedicated endpoint: \u003ccode\u003eDocentMcpEndpoint\u003c/code\u003e parks a long-lived authorized session on the IDE\u0027s \u003cb\u003eprivate\u003c/b\u003e MCP server — separate port, per-IDE-run auth token, tool filter reduced to the docent toolset. This resolves the reviewer\u0027s core objection to pointing agents at the public IDE server (~119 tools, duplicated in full when the user\u0027s own config already registers it), and it has a decisive side effect discovered in the MCP plugin\u0027s source: \u003cb\u003ethe private server runs regardless of the user-facing \"Enable MCP server\" setting\u003c/b\u003e, so that setting stopped being a first-run prerequisite entirely. The onboarding surfaces built earlier in the day were then demoted to what they should be: a project-open activity arms the endpoint (pre-warming the server before any launch), and the warning notice + balloon fire only in the genuine double-failure case — endpoint failed AND the public fallback is off.",
+      "anchors": [
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/mcp/DocentMcpEndpoint.kt",
+          "label": "The docent-only endpoint (new)",
+          "comments": [
+            {
+              "line": 52,
+              "body": "The honest risk of this change: \u003ccode\u003eauthorizedSession\u003c/code\u003e lives in the MCP plugin\u0027s \u003ccode\u003eimpl\u003c/code\u003e package and its doc says it \"runs only for the method execution period\" — we stretch that to IDE-lifetime by parking the block on \u003ccode\u003eawaitCancellation()\u003c/code\u003e. The semantics hold by design (the private server stays up while any session holds it, ref-counted), but a future MCP plugin update could change them. That\u0027s why the launch side keeps a fallback ladder (next section) and failure here logs at WARN instead of breaking anything.",
+              "anchorText": "McpServerService.getInstance().authorizedSession("
+            },
+            {
+              "line": 60,
+              "body": "The token returned by \u003ccode\u003eauthorizedSession\u003c/code\u003e is only valid while the block runs, so the block must outlive every agent that got the token injected. App-service scope cancellation (IDE shutdown) is the natural end. After an IDE restart the token is dead — but injection happens per launch, so relaunched agents always carry the fresh one. An agent session that outlives the IDE loses the endpoint; same story as the public server\u0027s port drift, accepted.",
+              "anchorText": "awaitCancellation() // hold the session"
+            },
+            {
+              "line": 85,
+              "body": "Two non-obvious facts baked in here: (1) \u003ccode\u003eMcpToolFilter\u003c/code\u003e is a \u003ci\u003esealed\u003c/i\u003e interface — it cannot be implemented outside its module; \u003ccode\u003eTextMcpToolFilter\u003c/code\u003e is the deliberately-open extension point. (2) The name it matches is \u003ccode\u003efullyQualifiedName\u003c/code\u003e \u003d toolset class FQN + \".\" + method (verified in the MCP plugin\u0027s reflection util), not the bare \u003ccode\u003edocent_record_decision\u003c/code\u003e — hence the package prefix, which also future-proofs against new docent tools.",
+              "anchorText": "toolName.startsWith(\"com.kevingosse.docent.\")"
+            },
+            {
+              "line": 70,
+              "body": "The first caller pays the private server\u0027s ktor startup (the launch contributor calls this on the launch path). 10s is deliberately generous: a false-negative here silently downgrades the launch to the public-server fallback, which is exactly the 119-tool exposure we\u0027re trying to avoid.",
+              "anchorText": "withTimeoutOrNull(10_000)"
+            }
+          ]
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/mcp/McpPrereq.kt",
+          "label": "Status gate (new)",
+          "comments": [
+            {
+              "line": 34,
+              "body": "OK now means \"agents can reach the tools by \u003ci\u003eeither\u003c/i\u003e rung\": the armed endpoint, or the public server as fallback. The enable-server one-click fix survives because it restores rung two when rung one is broken.",
+              "anchorText": "DocentMcpEndpoint.getInstance().armedOrNull() !\u003d null || McpServerGate.isEnabled()"
+            },
+            {
+              "line": 78,
+              "body": "Reflection is not paranoia here — \u003ccode\u003eMcpServerSettings\u003c/code\u003e is Kotlin-\u003ccode\u003einternal\u003c/code\u003e, so a direct call doesn\u0027t compile even though the JVM signatures are public (verified via javap before choosing this route). Side benefit: the platform-clean core (the nav panel imports \u003ccode\u003eMcpPrereq\u003c/code\u003e) never links against the optional MCP plugin.",
+              "anchorText": "Class.forName(\"com.intellij.mcpserver.settings.McpServerSettings\")"
+            }
+          ]
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/mcp/DocentMcpPrereqActivity.kt",
+          "label": "Project-open arming + last-resort warning (new)",
+          "comments": [
+            {
+              "line": 23,
+              "body": "Arming at project open does double duty: the private server is warm before the first agent launch, and it makes the status surfaces truthful — without this, a fresh IDE with the public setting off would show a scary \"agents can\u0027t reach the Docent\" notice that a launch would in fact have fixed.",
+              "anchorText": "val endpointArmed \u003d runCatching { DocentMcpEndpoint.getInstance().endpoint() }.getOrNull() !\u003d null"
+            }
+          ]
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/ui/DocentNavPanel.kt",
+          "ranges": [
+            {
+              "start": 351,
+              "end": 377
+            },
+            {
+              "start": 282,
+              "end": 283
+            },
+            {
+              "start": 30,
+              "end": 31
+            }
+          ],
+          "label": "Prerequisite notice on the empty surface",
+          "comments": [
+            {
+              "line": 357,
+              "body": "The notice lives at the top of the no-trail surface — where a confused first-time user actually looks — not only in a dismissable balloon. After the endpoint work it should almost never appear; when it does, something is genuinely broken and the one-click \"Turn on the MCP server\" restores the fallback injection path.",
+              "anchorText": "private fun mcpPrereqRows(): List\u003cJComponent\u003e"
+            }
+          ]
+        },
+        {
+          "path": "src/main/resources/META-INF/docent-mcp.xml",
+          "ranges": [
+            {
+              "start": 7,
+              "end": 12
+            }
+          ],
+          "label": "Activity registration (MCP-gated)"
+        }
+      ]
+    },
+    {
+      "headline": "Zero-setup launch wiring for both providers — and the two designs it replaced",
+      "narration": "The launch contributor now injects the endpoint into every workbench agent launch, additively — the user\u0027s own MCP config is never touched, replaced, or shadowed. This section carries the day\u0027s full decision arc, because two credible designs were implemented and then rejected on verified facts. \u003cb\u003eDesign 1\u003c/b\u003e: flip Agent Workbench\u0027s \u003ccode\u003eagent.workbench.mcp.use.direct.http\u003c/code\u003e registry key so AWB itself wires MCP — rejected by the reviewer because the key is unexposed and defaulted off by JetBrains (unknown blast radius), and because its \u003ccode\u003e--strict-mcp-config\u003c/code\u003e semantics hide the user\u0027s globally-configured MCP servers from workbench sessions (verified: this machine\u0027s wiring lives in the global \u003ccode\u003e~/.claude.json\u003c/code\u003e, exactly what strict mode would drop). \u003cb\u003eDesign 2\u003c/b\u003e: additive injection pointing at the \u003ci\u003epublic\u003c/i\u003e IDE server — rejected for the 119-tool duplication. \u003cb\u003eDesign 3 (this one)\u003c/b\u003e keeps Design 2\u0027s mechanism and swaps the target for the filtered endpoint. The enabling facts were verified against the live CLIs before committing: Claude\u0027s \u003ccode\u003e--mcp-config \u0026lt;configs...\u0026gt;\u003c/code\u003e is variadic, accepts inline JSON, and only becomes exclusive under \u003ccode\u003e--strict-mcp-config\u003c/code\u003e; Codex\u0027s dotted \u003ccode\u003e-c\u003c/code\u003e paths CREATE config entries, including \u003ccode\u003ehttp_headers\u003c/code\u003e for the auth token. Codex gains full parity — no \u003ccode\u003e~/.codex/config.toml\u003c/code\u003e entry needed anymore, which also defangs the old hardcoded-server-name backlog item.",
+      "anchors": [
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/awb/DocentLaunchContributor.kt",
+          "ranges": [
+            {
+              "start": 118,
+              "end": 189
+            },
+            {
+              "start": 23,
+              "end": 26
+            },
+            {
+              "start": 52,
+              "end": 60
+            },
+            {
+              "start": 259,
+              "end": 268
+            }
+          ],
+          "label": "Per-launch injection (Claude + Codex)",
+          "comments": [
+            {
+              "line": 161,
+              "body": "The fallback ladder, in one place: docent-only endpoint → public server URL (unauthenticated, full toolset — only when arming failed) → null (skip injection; the nav notice/balloon explain why). Each rung resolves fresh per launch, so neither the port nor the token can go stale the way a written-once config file entry does — the exact weakness of AWB\u0027s own \"set up MCP\" bubble, which bakes the current port into the user\u0027s client config.",
+              "anchorText": "private suspend fun resolveDocentMcp()"
+            },
+            {
+              "line": 183,
+              "body": "If the user themselves enabled AWB\u0027s managed wiring (the registry key we chose not to touch), the command already carries \u003ccode\u003e--strict-mcp-config\u003c/code\u003e plus a merged config pointing at this IDE — the docent tools are reachable through it, and adding a second config under strict semantics has unclear precedence. Standing down is the safe move in a setup that already works.",
+              "anchorText": "command.contains(\"--strict-mcp-config\")"
+            },
+            {
+              "line": 140,
+              "body": "Verified live before relying on it: \u003ccode\u003ecodex -c mcp_servers.docent.http_headers.IJ_MCP_AUTH_TOKEN\u003dtok mcp get docent\u003c/code\u003e shows the header registered. Codex\u0027s \u003ccode\u003emcp add --help\u003c/code\u003e only advertises bearer tokens for HTTP servers — the config schema is more capable than the CLI surface suggests. The token value (a UUID) fails TOML parsing and falls back to a literal string, which is exactly what we want.",
+              "anchorText": "mcp_servers.$DOCENT_MCP_NAME.http_headers.${mcp.headerName}"
+            },
+            {
+              "line": 270,
+              "body": "Demoted from load-bearing to defensive. Before: this HAD to match the user\u0027s config.toml entry or Codex never saw the tools. Now the injected \u003ccode\u003edocent\u003c/code\u003e entry guarantees visibility — but a user entry pointing at the public server also exposes the docent tools, and we can\u0027t control which entry Codex resolves a call through, so its 60s timeout still gets lifted to protect a blocking \u003ccode\u003edocent_await_event\u003c/code\u003e.",
+              "anchorText": "private const val CODEX_MCP_SERVER_NAME \u003d \"rider\""
+            },
+            {
+              "line": 4,
+              "body": "Gotcha for future archaeology: the installed AWB 262.8377 has this class under \u003ccode\u003ecom.intellij.platform.ai.agent…\u003c/code\u003e, while the intellij-community checkout still shows it under \u003ccode\u003ecom.intellij.agent.workbench…\u003c/code\u003e — same package split that already moved the session/launch types. Reading the community source will mislead you about import paths.",
+              "anchorText": "import com.intellij.platform.ai.agent.sessions.core.launch.McpStreamUrlProvider"
+            }
+          ]
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/awb/DocentWorkbenchSetup.kt",
+          "ranges": [
+            {
+              "start": 26,
+              "end": 31
+            }
+          ],
+          "label": "Why the AWB registry key stays untouched",
+          "comments": [
+            {
+              "line": 26,
+              "body": "This paragraph replaced its own predecessor twice today. Original: \"don\u0027t enable direct-http, stdio is the working path\" (rationale obsolete — the ~60s HTTP timeout only mattered for blocking \u003ccode\u003edocent_await_event\u003c/code\u003e, and Claude moved to file-watch delivery). Then briefly: \"we flip the key on once\". Final: don\u0027t touch it at all, at the reviewer\u0027s direction — the injection above achieves the same zero-setup result without changing AWB\u0027s behavior for everything else.",
+              "anchorText": "We deliberately do NOT touch the workbench\u0027s"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "headline": "Follow-up reviews: close the loop with the machinery that already exists",
+      "narration": "The roughest edge from real use (top of STATUS\u0027s \"what\u0027s left\"): after \"Complete review\" dispatches the queued change requests, the agent edits the code — and that delta, the code the reviewer most explicitly asked to see, landed as a raw diff with no trail and no continuity. The v1 answer deliberately builds \u003ci\u003eno new UI\u003c/i\u003e: the agent is now instructed to record a decision per implemented request (what was asked, how it was addressed, where it deviated) and then announce that the delta is reviewable. From there the existing on-demand machinery carries it: fresh decisions repopulate the start surface\u0027s pending counts, the user clicks \"Start reviewing\" again, and the synthesized \"Other changes\" section absorbs the already-reviewed remainder while the response sections lead. The real UI continuity — a resolved state on the original request card with its edit attached, a baseline snapshot at completion so an uncommitted follow-up diffs against the reviewed state instead of HEAD — is deferred, not rejected: the reviewer said that UX is still a gray area, and release day is the wrong moment to guess it.",
+      "anchors": [
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/ReviewEventEnvelope.kt",
+          "ranges": [
+            {
+              "start": 26,
+              "end": 35
+            }
+          ],
+          "label": "The load-bearing copy",
+          "comments": [
+            {
+              "line": 32,
+              "body": "Of the three places this instruction now lives (envelope hint, launch-injected protocol, tool descriptions), this one is load-bearing: it arrives in the \u003ccode\u003ereview_completed\u003c/code\u003e envelope at the exact moment the agent starts implementing, so it survives the context compaction that may have eaten a launch-time system prompt hours earlier.",
+              "anchorText": "As you implement each one, record a docent_record_decision"
+            }
+          ]
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/awb/DocentProtocolPrompt.kt",
+          "ranges": [
+            {
+              "start": 71,
+              "end": 73
+            },
+            {
+              "start": 86,
+              "end": 88
+            }
+          ],
+          "label": "Protocol tails (Monitor + Await)"
+        },
+        {
+          "path": "src/main/kotlin/com/kevingosse/docent/mcp/DocentMcpToolset.kt",
+          "ranges": [
+            {
+              "start": 82,
+              "end": 83
+            },
+            {
+              "start": 227,
+              "end": 229
+            }
+          ],
+          "label": "Same instruction at the tool layer"
+        }
+      ]
+    },
+    {
+      "headline": "Release engineering: reproducible EAP base, first-user README",
+      "narration": "Two installation-facing changes. \u003cb\u003eBuild base\u003c/b\u003e: CI used to track the rolling \u003ccode\u003e2026.2-SNAPSHOT\u003c/code\u003e because, when that was written, no published EAP matched the Agent Workbench pin — the snapshots repo topped out at EAP6 (262.7581) against a 262.8377 workbench. That gap closed on June 25: EAP8 \u003ci\u003eis\u003c/i\u003e build 262.8377.34 (JetBrains skipped EAP7 entirely), an exact three-way match with the local dev base and the AWB pin, so CI is now anchored on it and builds are reproducible instead of drifting until the rolling snapshot breaks compilation. Caveat: local builds resolve the IDE from \u003ccode\u003eriderLocalPath\u003c/code\u003e, so the download path is only exercised on CI — watch the first run. \u003cb\u003eREADME\u003c/b\u003e: rewritten from a project pitch into a first-user guide (what it does, the five-step review loop, install-from-zip, first run, troubleshooting). Notably, the \"turn on the MCP server\" first-run step and the \"Using Codex? one extra step\" section were both written and then \u003ci\u003edeleted again today\u003c/i\u003e as the endpoint work made them unnecessary — the first-run list is now: open the panel, launch an agent, click Start reviewing.",
+      "anchors": [
+        {
+          "path": "gradle.properties",
+          "ranges": [
+            {
+              "start": 2,
+              "end": 2
+            },
+            {
+              "start": 18,
+              "end": 24
+            }
+          ],
+          "label": "EAP pin + version",
+          "comments": [
+            {
+              "line": 24,
+              "body": "Verified against JetBrains data services before pinning: 2026.2-EAP8 \u003d build 262.8377.34, exactly the local Rider and the pinned \u003ccode\u003eagentWorkbenchVersion\u003c/code\u003e (262.8377.20260625). The AWB API differs build-to-build, so this three-way alignment is what makes the pin safe; bump both together, always.",
+              "anchorText": "riderVersion \u003d 2026.2-EAP8-SNAPSHOT"
+            },
+            {
+              "line": 2,
+              "body": "0.4.0 was built and installed mid-session (before the endpoint rework); bumped so install-from-disk replaces it cleanly.",
+              "anchorText": "pluginVersion \u003d 0.4.1"
+            }
+          ]
+        },
+        {
+          "path": "README.md",
+          "label": "First-user guide",
+          "comments": [
+            {
+              "line": 31,
+              "body": "This step absorbed two prerequisites that existed this morning: \"turn on the MCP server\" (gone — the endpoint doesn\u0027t need it) and the Codex config.toml block (gone — injected per launch). If the first wave still stumbles here, the endpoint isn\u0027t doing its job.",
+              "anchorText": "Launch an agent session from the **Agent Workbench** and give it a task."
+            }
+          ]
+        },
+        {
+          "path": "docs/STATUS.md",
+          "ranges": [
+            {
+              "start": 7,
+              "end": 13
+            },
+            {
+              "start": 60,
+              "end": 85
+            },
+            {
+              "start": 114,
+              "end": 119
+            },
+            {
+              "start": 140,
+              "end": 143
+            }
+          ],
+          "label": "Status snapshot updated",
+          "comments": [
+            {
+              "line": 9,
+              "body": "Deliberately honest markers: a previous status pass let stale \"not click-tested\" claims propagate into other docs and advice, so this one separates what\u0027s verified live (everything pre-0.4.0) from today\u0027s work, which has only compiler-level and CLI-probe verification behind it.",
+              "anchorText": "built, not yet click-tested"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "baseRef": "HEAD"
+}

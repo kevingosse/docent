@@ -23,12 +23,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * installation throws we notify instead of swallowing, and once per IDE run [DocentSeamCheck] verifies every
  * reflective touchpoint and reports what a new workbench build broke.
  *
- * We deliberately do NOT enable the workbench's `agent.workbench.mcp.use.direct.http` registry key. It defaults
- * to false, which means a workbench-launched agent reaches the IDE's MCP server through the user's `.mcp.json`
- * (the ij-proxy **stdio** path) — empirically the working path here, and the one NOT subject to Claude Code's
- * ~60s HTTP first-byte timeout that makes `docent_await_event` burn tokens (stdio is exempt). None of the
- * Docent's features need direct-HTTP; the push transport ([DocentEventNotifier]) and the session directory are
- * independent of the MCP transport.
+ * We deliberately do NOT touch the workbench's `agent.workbench.mcp.use.direct.http` registry key: it's
+ * unexposed and defaulted off by JetBrains (unknown blast radius), and its `--strict-mcp-config` semantics
+ * would hide the user's globally-configured MCP servers from workbench sessions. Instead, MCP tool
+ * visibility for a fresh machine is guaranteed additively: [DocentLaunchContributor] appends Docent's own
+ * `--mcp-config` (an inline JSON entry with the IDE's current MCP URL) to Claude launches, leaving every
+ * other MCP source intact.
  */
 class DocentWorkbenchSetup : ProjectActivity {
     override suspend fun execute(project: Project) {
