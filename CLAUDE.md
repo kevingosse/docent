@@ -40,7 +40,7 @@ what's left to build.
 ## Tech stack
 
 - IntelliJ Platform plugin; Kotlin 2.4.0; Gradle 9.1.0; IntelliJ Platform Gradle Plugin 2.16.0.
-- Base platform: **builds against the locally-installed Rider** (build 262 / 2026.2), `since-build 252`,
+- Base platform: **builds against the locally-installed Rider** (build 262 / 2026.2 EAP9+), `since-build 262.8665`,
   Java 21 toolchain. (Bumped from IC 2024.3 once the MCP integration needed `com.intellij.mcpServer`,
   which is bundled only in 2025+; building against the local Rider is zero-download and exact-match — see
   `build.gradle.kts`. Kotlin had to move 2.1→2.4 to read Rider 262's platform metadata.)
@@ -50,14 +50,16 @@ what's left to build.
   embedded editors), **not** JCEF.
 - `instrumentCode` and `buildSearchableOptions` are disabled (Kotlin-only, no custom Settings) — see
   the comments in `build.gradle.kts`.
-- **Dual build variants** since 0.5.0: 2026.3 renamed the entire AWB API (every type moved to `com.intellij.air.*`)
-  under the same plugin id, so the AWB seam is compiled per target — `-PawbTarget=262` (default) or
-  `263` selects the `src/awb262|awb263` twin source tree, `docent-awb.xml` variant, dependency
-  coordinates, `-262|-263` version suffix and since/until-build range. Shared AWB-free code stays in
-  `src/main`. Full story: `docs/AWB-2026.3-COMPAT.md` (Resolution); the member-exact 262→263 API map
-  (`AWB-263-API-MAP.md`) is kept **outside the repo** (local-only, next to the compile-classpath dir).
-- Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-*-262.zip` (default 262
-  variant; `-PawbTarget=263` needs an AWB 263 source — see gradle.properties).
+- **Single universal artifact** since 0.5.2: 2026.3 renamed the entire AWB API (every type moved to
+  `com.intellij.air.*`, `Session`→`Thread`), and that rework then landed mid-262-line too — Rider EAP9
+  (build 262.8665) carries the same `air.*` API, **verified byte-identical** to the 2026.3 build for every
+  type we touch. So the old `awb262`/`awb263` split collapsed into one `src/awb` seam compiled against the
+  `air.*` API, shipped as one zip with `since-build 262.8665`, `until-build 263.*` — it loads on 2026.2
+  EAP9+ *and* all of 2026.3. (There's also no CI-buildable native 263: no AWB 263 exists on any public
+  channel, so a single air.* binary was the only way to cover 263 anyway.) Shared AWB-free code stays in
+  `src/main`. Full story: `docs/AWB-2026.3-COMPAT.md`; the member-exact API map (`AWB-263-API-MAP.md`) is
+  kept **outside the repo** (local-only, next to the compile-classpath dir).
+- Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-<version>.zip`.
   Dev run: `./gradlew runRider` (launches local Rider with the plugin, no SDK download) then
   **Tools → Open Docent Review**. `./gradlew runIde` uses the IC sandbox but lacks C#/C++ nav.
 

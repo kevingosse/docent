@@ -1,4 +1,3 @@
-import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
 plugins {
@@ -7,30 +6,25 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
-// --- Dual build variants (Agent Workbench 262 vs 2026.3 build 263) -------------------------------
-// The SAME plugin id ships as two build variants, selected by the `awbTarget` Gradle property
-// (`-PawbTarget=262|263`, default 262 — see gradle.properties). The 2026.3 release reworked the whole
-// Agent Workbench API surface (every type moved to the `com.intellij.air.*` namespace AND renamed
-// Session→Thread, and both launch EPs were renamed) while KEEPING the plugin id `com.intellij.agent.workbench`.
-// A single compiled binary therefore can't satisfy both (it would have to implement two EP interfaces that
-// never coexist, and the plugin id is identical so we can't gate a config-file by <depends>). So we compile
-// the AWB seam against its target's coordinates and publish two artifacts; the Marketplace serves the right
-// one per IDE build via since/until-build (262 capped at 262.*, 263 open from build 263).
+// --- Single universal artifact (Agent Workbench "air.*" API) -------------------------------------
+// Historically this shipped as two build variants (awb262 / awb263) because the 2026.3 release reworked the
+// whole Agent Workbench API — every type moved to the `com.intellij.air.*` namespace, Session→Thread, both
+// launch EPs renamed — while KEEPING the plugin id `com.intellij.agent.workbench`. That rework then landed
+// MID-262-LINE too: Rider EAP8 (build 262.8377) still had the old `com.intellij.platform.ai.agent.*` API,
+// but EAP9 (262.8665, AWB 262.8665.20260706) already carries the new `air.*` API — verified byte-identical
+// to the 2026.3 build (263.1174) for every type this plugin references (javap-diff, 2026-07-06).
 //
-// Source layout: everything AWB-free stays in src/main (shared, compiled into BOTH variants); the AWB-touching
-// code lives per-variant in src/awb262 and src/awb263 with the SAME package + class names, so the shared code
-// referencing them compiles unchanged against either. Exactly one of those trees is added to the main source
-// set below, per awbTarget.
-val awbTarget: String =
-    providers.gradleProperty("awbTarget").orNull?.takeIf { it.isNotBlank() } ?: "262"
-require(awbTarget == "262" || awbTarget == "263") {
-    "awbTarget must be '262' or '263' (was '$awbTarget')"
-}
+// So the API split evaporated: 2026.2 (EAP9+) and 2026.3 now expose the SAME air.* surface. And there is NO
+// AWB 263 on any public channel (Marketplace newest = 262.8665.*), so CI cannot even download a dependency to
+// build a native 263 artifact. Both facts point the same way: compile ONE binary against the air.* API and
+// let each IDE supply its own AWB at runtime. The Marketplace serves it to any IDE in [262.8665, 263.*] (see
+// the since/until-build below). Early-262 EAPs (< 262.8665, old API) are intentionally dropped.
+//
+// Source layout: AWB-free code stays in src/main; the AWB-touching code (the air.* seam) lives in src/awb.
+val awbBuild = "262.8665" // floor: first build carrying the air.* API (2026.2 EAP9)
 
 group = providers.gradleProperty("pluginGroup").get()
-// Marketplace requires a DISTINCT version string per artifact of the same plugin id, so we suffix the target
-// (JetBrains' documented convention for build-specific variants): e.g. 0.5.0-262 / 0.5.0-263.
-version = "${providers.gradleProperty("pluginVersion").get()}-$awbTarget"
+version = providers.gradleProperty("pluginVersion").get()
 
 repositories {
     mavenCentral()
@@ -39,37 +33,27 @@ repositories {
     }
 }
 
-// Platform base + Agent Workbench resolution has two modes, and is now ALSO per-target (262 vs 263):
+// Platform base + Agent Workbench resolution has two modes:
 //
 //   * Local (developer default): build against the locally-installed Rider and the installed
 //     Agent Workbench plugin. Zero-download, matches the runtime exactly, and gives us
 //     `com.intellij.mcpServer` (bundled only since 2025+). Enabled by setting the `riderLocalPath`
 //     Gradle property (e.g. in ~/.gradle/gradle.properties or -PriderLocalPath=...) / RIDER_HOME and
-//     the `agentWorkbenchPluginPath` property / AGENT_WORKBENCH_PLUGIN env var.
+//     the `agentWorkbenchPluginPath` property / AGENT_WORKBENCH_PLUGIN env var. NB: both must now point
+//     at an air.* build (Rider EAP9+ / the `air-plugin` install), not the old 262.8377 `agent-workbench-plugin`.
 //
 //   * Download (CI, no local IDE): when those paths are unset we download the Rider build named by
 //     the `riderVersion` property and resolve the Agent Workbench plugin from the JetBrains
 //     Marketplace at `agentWorkbenchVersion`. NB: the workbench's since/until-build pins it to a
 //     single Rider build, so `riderVersion` and `agentWorkbenchVersion` are tightly coupled — bump
-//     them together (see gradle.properties).
-//
-// Per-target: the 262 target uses the existing property/env names; the 263 target uses their *263 twins.
-// `riderLocalPath`/RIDER_HOME is a 262 Rider install, so it applies to the 262 target ONLY — the 263 target
-// reads `riderLocalPath263`/RIDER_HOME_263 (for a future local 263 IDE) or downloads `riderVersion263`.
-// The platformType/platformVersion properties are vestigial (kept for reference/fallback).
+//     them together (see gradle.properties). Both must be air.*-era builds (>= 262.8665).
 fun propOrEnv(prop: String, env: String): String? =
     providers.gradleProperty(prop).orNull?.takeIf { it.isNotBlank() }
         ?: providers.environmentVariable(env).orNull?.takeIf { it.isNotBlank() }
 
-val riderLocalPath: String? =
-    if (awbTarget == "263") propOrEnv("riderLocalPath263", "RIDER_HOME_263")
-    else propOrEnv("riderLocalPath", "RIDER_HOME")
+val riderLocalPath: String? = propOrEnv("riderLocalPath", "RIDER_HOME")
 
-val agentWorkbenchPluginPath: String? =
-    if (awbTarget == "263") propOrEnv("agentWorkbenchPluginPath263", "AGENT_WORKBENCH_PLUGIN_263")
-    else propOrEnv("agentWorkbenchPluginPath", "AGENT_WORKBENCH_PLUGIN")
-
-val riderVersionProp = if (awbTarget == "263") "riderVersion263" else "riderVersion"
+val agentWorkbenchPluginPath: String? = propOrEnv("agentWorkbenchPluginPath", "AGENT_WORKBENCH_PLUGIN")
 
 dependencies {
     intellijPlatform {
@@ -78,40 +62,23 @@ dependencies {
         } else {
             // useInstaller = false is REQUIRED for Rider: the IJP plugin can't consume Rider's
             // installer distribution, so we pull the maven artifact (com.jetbrains.intellij.rider:
-            // riderRD) instead. Both 2026.2 (262) and 2026.3 (263) platforms are still EAP/snapshot, so
-            // `riderVersion*` is a `-SNAPSHOT` from the snapshots repo (already part of defaultRepositories()).
-            rider(providers.gradleProperty(riderVersionProp).get()) {
+            // riderRD) instead. 2026.2 is still EAP, so `riderVersion` is a `-SNAPSHOT` from the
+            // snapshots repo (already part of defaultRepositories()).
+            rider(providers.gradleProperty("riderVersion").get()) {
                 useInstaller = false
             }
         }
 
         // The in-IDE MCP server: lets us publish McpToolset tools the workbench's agents can call. Bundled
-        // in the platform on BOTH 262 and 263 (the mcpServer seam is byte-for-byte identical — see the API map),
-        // so the mcp/ package is version-agnostic and needs no per-target handling.
+        // in the platform, so the mcp/ package is version-agnostic.
         bundledPlugin("com.intellij.mcpServer")
 
-        // Agent Workbench: optional compile-time dep for its launch / MCP-wiring EPs. The type surface
-        // differs wholesale 262↔263 (the 263 rework), so the awb262/awb263 source set is compiled against the
-        // matching coordinates. Plugin id is unchanged (`com.intellij.agent.workbench`) on both. When building
-        // locally it's an installed user plugin; in CI it comes from the Marketplace. Re-verify the EP shapes
-        // (javap the jars) whenever the base moves.
+        // Agent Workbench: optional compile-time dep for its launch / MCP-wiring EPs (the air.* API). Plugin
+        // id is `com.intellij.agent.workbench`. When building locally it's the installed `air-plugin`; in CI it
+        // comes from the Marketplace at `agentWorkbenchVersion`. Re-verify the EP shapes (javap the jars)
+        // whenever the base moves.
         if (agentWorkbenchPluginPath != null) {
             localPlugin(file(agentWorkbenchPluginPath))
-        } else if (awbTarget == "263") {
-            // Resolution order for 263: local path (handled above), else a non-empty `agentWorkbenchVersion263`,
-            // else FAIL FAST. AWB 263 is published on NO public channel yet (verified 2026-07-06: newest
-            // Marketplace AWB is 262.8665.20260706; the 263 build is not bundled in riderRD-2026.3-SNAPSHOT either), so
-            // `agentWorkbenchVersion263` is intentionally empty and this normally throws with instructions —
-            // rather than silently resolving a wrong (262) AWB build against the 263 base.
-            val v = providers.gradleProperty("agentWorkbenchVersion263").orNull?.takeIf { it.isNotBlank() }
-                ?: error(
-                    "awbTarget=263 but no Agent Workbench 263 build is available. AWB 263 is not " +
-                        "published on any public channel yet (verified 2026-07-06). To build the 263 variant, set " +
-                        "`agentWorkbenchPluginPath263` (or the AGENT_WORKBENCH_PLUGIN_263 env var) to a locally-" +
-                        "installed AWB 263 plugin directory; or, once it is published, set `agentWorkbenchVersion263` " +
-                        "to its Marketplace version. Until then the src/awb263 sources cannot be compiled.",
-                )
-            plugin("com.intellij.agent.workbench", v)
         } else {
             plugin("com.intellij.agent.workbench", providers.gradleProperty("agentWorkbenchVersion").get())
         }
@@ -121,18 +88,18 @@ dependencies {
     }
 }
 
-// Add the selected variant's AWB source tree to the main source set. Shared code (src/main) references the
-// per-variant classes by their (identical) package + name, so it compiles against whichever tree is added here.
-// The Kotlin sources go on the Kotlin source set (so the Kotlin compiler picks them up); the resources go on
-// the base source set (so processResources bundles the variant's META-INF/docent-awb.xml).
+// Add the AWB (air.*) seam to the main source set. Shared code (src/main) references its classes by package +
+// name, and the seam is compiled against the AWB dependency resolved above. The Kotlin sources go on the Kotlin
+// source set (so the Kotlin compiler picks them up); the resources go on the base source set (so
+// processResources bundles META-INF/docent-awb.xml).
 kotlin {
     sourceSets.named("main") {
-        kotlin.srcDir("src/awb$awbTarget/kotlin")
+        kotlin.srcDir("src/awb/kotlin")
     }
 }
 sourceSets {
     named("main") {
-        resources.srcDir("src/awb$awbTarget/resources")
+        resources.srcDir("src/awb/resources")
     }
 }
 
@@ -146,16 +113,12 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            // Per-target build range. Now that a 263 artifact exists, the 262 artifact is CAPPED at 262.* so the
-            // Marketplace serves each IDE its matching variant (an uncapped 262 would otherwise also match 263,
-            // where its old EP + compiled AWB references are dead). 263 starts at build 263 and is left open.
-            if (awbTarget == "263") {
-                sinceBuild = "263"
-                // untilBuild intentionally left open (263 is the newest line).
-            } else {
-                sinceBuild = "252"
-                untilBuild = "262.*"
-            }
+            // One artifact for the whole air.* window. Floor = 262.8665 (2026.2 EAP9, first build with the
+            // air.* API); anything below that has the old platform.ai.agent.* API and would fail at load, so
+            // it's deliberately excluded. Cap at 263.* so it also serves all of 2026.3 but can't wrongly match
+            // a hypothetical 264 that reworks the API again (revisit then).
+            sinceBuild = awbBuild
+            untilBuild = "263.*"
         }
     }
 
@@ -173,11 +136,10 @@ intellijPlatform {
         // mismatches against a bundled-but-older AWB. The core (everything else) is still verified.
         // NB: the other optional dep, com.intellij.mcpServer, is bundled in IDEA/PyCharm so it
         // resolves fine and needs no exclusion.
-        // AWB split its API across two roots after the 2026.2 upgrade: some classes still live under
-        // com.intellij.agent.workbench (prompt.core, sessions.state, chat) while session/launch types
-        // moved to com.intellij.platform.ai.agent. The 2026.3 rework added a THIRD root,
-        // com.intellij.air.* (used by the awb263 variant). All are AWB-provided, so treat all three as
-        // external (only the compiled-in variant references one set; the prefixes are harmless supersets).
+        // The AWB seam now lives entirely under com.intellij.air.* (some support classes still under
+        // com.intellij.agent.workbench). Both are AWB-provided, so treat them as external — they resolve at
+        // runtime in an IDE that has the workbench, but not against the verifier's bare IDEs. (The old
+        // com.intellij.platform.ai.agent root is kept as a harmless superset for older ignored-problem entries.)
         externalPrefixes = listOf(
             "com.intellij.agent.workbench",
             "com.intellij.platform.ai.agent",
@@ -190,22 +152,12 @@ intellijPlatform {
             VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
             VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
         )
-        // The verifier IDE list (2026.1.3 = build 261) is only meaningful for the 262 target: 261 ≥ our
-        // 262-target since-build 252 and is a real published build to check core portability against. For the
-        // 263 target there are NO public 263 IDE builds yet, and a 261 IDE is BELOW the 263 since-build so the
-        // verifier would (correctly) reject the plugin as incompatible — a false negative about portability. So
-        // we only populate `ides {}` for 262; on 263 `verifyPlugin` has no IDEs to run against and effectively
-        // no-ops until a public 263 build exists (revisit then).
-        if (awbTarget == "262") {
-            ides {
-                // Released, non-Rider products at the latest public build (261 ≥ our since-build 252).
-                // If the core ever reaches for a Rider-only or too-new platform API, this turns red.
-                // Since 2025.3 (253) the Community/Ultimate downloads are unified, so the old
-                // IntellijIdeaCommunity / PyCharmCommunity coordinates are gone — use the merged types.
-                create(IntelliJPlatformType.IntellijIdea, "2026.1.3")
-                create(IntelliJPlatformType.PyCharm, "2026.1.3")
-            }
-        }
+        // The verifier IDE list is intentionally EMPTY for now. Our since-build floor (262.8665) is ABOVE
+        // every public non-Rider release (2026.2 is still EAP), so any downloadable IDEA/PyCharm build the
+        // verifier could use is below the floor and would be (correctly) rejected as incompatible — a false
+        // negative about portability, not a real one. With no `ides {}` entries `verifyPlugin` has nothing to
+        // run against and effectively no-ops. Re-add a real >= 262.8665 non-Rider build once 2026.2 ships
+        // publicly, to restore the cross-IDE core-portability check.
     }
 }
 
@@ -214,10 +166,6 @@ kotlin {
 }
 
 // --- Rider navigation check ----------------------------------------------------------------------
-// NB: the runRider / runIdea dev tasks are 262-oriented — they launch the locally-installed 262 Rider/IDEA
-// (riderLocalPath/ideaLocalPath). Under `-PawbTarget=263` they are meaningless until a local 263 IDE exists:
-// `riderLocalPath` resolves to null on the 263 target (it's a 262 install), so runRider isn't even registered.
-//
 // Launch the locally installed Rider (no Rider SDK download) with this plugin loaded, to verify
 // that embedded editor cells receive the .NET backend's navigation.
 //   Run:  ./gradlew runRider

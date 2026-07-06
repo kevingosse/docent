@@ -5,11 +5,10 @@ name: Verify (cross-IDE)
 # that uses platform APIs, to confirm the plugin still loads on non-Rider IntelliJ IDEs. The set of
 # IDEs and the externalPrefixes/failureLevel live in build.gradle.kts (pluginVerification block).
 #
-# 262 TARGET ONLY. This runs `verifyPlugin` at the default awbTarget=262. There is intentionally no
-# 263 verify leg: no public 263 IDE builds exist yet to verify against, and a 261-era verifier IDE is
-# BELOW the 263 since-build (it would falsely reject the plugin). So build.gradle.kts populates the
-# verifier `ides {}` list only for 262 — on 263 verifyPlugin has nothing to run against. Revisit once
-# a public 263 IDE build ships (verified 2026-07-06).
+# NB: the verifier `ides {}` list is currently EMPTY (see build.gradle.kts): our since-build floor
+# (262.8665) is above every public non-Rider release while 2026.2 is still EAP, so there's no valid
+# IDE to verify against yet and `verifyPlugin` effectively no-ops. Re-add a real >= 262.8665 non-Rider
+# build here once 2026.2 ships publicly (verified 2026-07-06).
 on:
   workflow_dispatch:
 

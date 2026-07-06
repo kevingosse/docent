@@ -8,25 +8,20 @@ on:
         required: true
         type: string
 
-# --- Dual-target release (see build.gradle.kts "Dual build variants") -----------------------------
-# A single job builds both variants and attaches whatever zips it produced to one GitHub Release.
-# The 262 zip is always built; the 263 zip is built only when AWB 263 is available (repo variable
-# `AWB263_MARKETPLACE_VERSION` set non-empty). A missing 263 zip is EXPECTED and must never fail the
-# release — the 263 build step and its artifact are gated, and `gh release create` globs whatever is
-# in build/distributions/, so it simply attaches the 262 zip alone when 263 is skipped.
+# --- Single universal artifact release (see build.gradle.kts header) -------------------------------
+# One artifact built against the Agent Workbench air.* API, attached to one GitHub Release. It loads on
+# both 2026.2 EAP9+ (build 262.8665+) and all of 2026.3. Rider + the workbench are downloaded (see
+# build.gradle.kts / gradle.properties).
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub Release + tag
-    # The 263 leg (when enabled) downloads the ~3.8 GB Rider 2026.3 snapshot on top of the 262 build,
-    # so allow generous headroom for the combined single-job run.
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      # The input stays a plain X.Y.Z; build.gradle.kts appends the target suffix, so the produced
-      # zips are code-review-docent-<version>-262.zip / -263.zip.
+      # The input is a plain X.Y.Z and is used verbatim as the plugin version.
       - name: Validate version
         run: |
           if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -44,22 +39,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # Override pluginVersion for this build only (no commit back); the released zip carries the
-      # requested version. As with the Build workflow, Rider + the workbench are downloaded. Default
-      # awbTarget=262, so this produces the 262 variant.
-      - name: Build 262 variant
+      # requested version, e.g. code-review-docent-<version>.zip.
+      - name: Build
         run: ./gradlew buildPlugin -PpluginVersion=${{ inputs.version }}
 
-      # Build the 263 variant into the SAME build/distributions/ dir (distinct -263 suffix, no clash).
-      # GATED on the AWB 263 Marketplace version repo variable — see the header comment. If unset
-      # this step is skipped and the release ships 262 only; this is intended, not an error. Once AWB
-      # 263 is published, set the `AWB263_MARKETPLACE_VERSION` repo variable
-      # (https://plugins.jetbrains.com/plugin/30926-agent-workbench/versions) and it activates with no
-      # workflow edit.
-      - name: Build 263 variant
-        if: vars.AWB263_MARKETPLACE_VERSION != ''
-        run: ./gradlew buildPlugin -PpluginVersion=${{ inputs.version }} -PawbTarget=263 "-PagentWorkbenchVersion263=${{ vars.AWB263_MARKETPLACE_VERSION }}"
-
-      # Attach every zip that was produced (262 always, 263 when the leg ran).
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}

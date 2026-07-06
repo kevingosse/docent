@@ -1,10 +1,11 @@
 package com.kevingosse.docent.awb
 
 /**
- * The reflective-FQN + provider-vocabulary constants for the **263 (2026.3) build variant**. The 263
- * rework moved the reflected chat/terminal types under `com.intellij.air.thread.view.*` and renamed
- * `Session`→`Thread` (see AWB-263-API-MAP.md (local-only, not committed) §C). Centralized here so the 262 twin (`src/awb262`) and
- * this one differ in exactly one file for the reflected names.
+ * The reflective-FQN + provider-vocabulary constants for the Agent Workbench **air.\* API** (2026.2 EAP9+
+ * and 2026.3, which share one API — see build.gradle.kts header). That rework moved the reflected
+ * chat/terminal types under `com.intellij.air.thread.view.*` and renamed `Session`→`Thread` (see
+ * AWB-263-API-MAP.md, local-only, not committed, §C). The inline `262:` notes below record the pre-rework
+ * (< 262.8665) FQNs for reference. Centralized here so all reflected names live in one file.
  */
 internal object AwbNames {
     /** The thread-view virtual file (open-tab thread identity), read reflectively.
