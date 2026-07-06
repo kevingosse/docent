@@ -32,15 +32,6 @@ internal object LaunchInjection {
      *  Codex `-c mcp_servers.<name>.url`). Tool visibility never depends on the user's own config. */
     private const val DOCENT_MCP_NAME = "docent"
 
-    /**
-     * The MCP server name a user's own `~/.codex/config.toml` typically gives THIS IDE's MCP server
-     * (`[mcp_servers.<name>] url = …/stream`) — we defensively patch its `tool_timeout_sec` on the Codex
-     * command line, because Codex may resolve a docent_* call through that entry rather than our injected
-     * [DOCENT_MCP_NAME] one (both expose the same tools). Wrong-or-absent is harmless now that the
-     * injected entry guarantees visibility; on this box the user entry is named `rider`.
-     */
-    private const val CODEX_MCP_SERVER_NAME = "rider"
-
     /** Per-server MCP tool-call timeout (seconds) for Codex, lifting the 60s default so a blocking
      *  docent_await_event survives a quiet review. 1h is generous; the agent re-calls on the rare timeout. */
     private const val CODEX_TOOL_TIMEOUT_SEC = 3600
@@ -88,14 +79,12 @@ internal object LaunchInjection {
      *    the authenticated docent-only endpoint) — Codex's analog of Claude's injected `--mcp-config`: a
      *    dotted `-c` path CREATES the server entry, so the `docent_*` tools are visible with zero user
      *    config, additively to whatever `~/.codex/config.toml` already registers.
-     *  - `tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` on BOTH our entry and the user's
-     *    [CODEX_MCP_SERVER_NAME] one — lifts the 60s default that would otherwise kill a blocking
-     *    docent_await_event.
+     *  - `tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` on our own [DOCENT_MCP_NAME] entry — lifts the 60s
+     *    default that would otherwise kill a blocking docent_await_event.
      */
     fun injectCodexConfig(command: List<String>, threadId: String?, mcp: DocentMcpTarget?): List<String> {
         val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.AWAIT, threadId))
         val extra = mutableListOf(
-            "-c", "mcp_servers.$CODEX_MCP_SERVER_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
             "-c", "developer_instructions=$protocol",
         )
         if (mcp != null) {
