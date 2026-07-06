@@ -1,19 +1,17 @@
 package com.kevingosse.docent.awb
 
 /**
- * One-shot self-check of every `@Internal` workbench API the Docent reaches **by reflection** (T2 in
- * docs/ASSESSMENT.md). Compiled references break loudly at class-load; these reflective seams don't — an
- * Agent Workbench update that renames a class, getter, or field turns into "mysteriously nothing happens"
- * (session listing empty, events silently undelivered). [DocentWorkbenchSetup] runs this once per IDE run
- * and raises a notification listing whatever no longer matches.
+ * **262 build variant.** One-shot self-check of every `@Internal` workbench API the Docent reaches **by
+ * reflection** (T2 in docs/ASSESSMENT.md). Compiled references break loudly at class-load; these reflective
+ * seams don't — an Agent Workbench update that renames a class, getter, or field turns into "mysteriously
+ * nothing happens" (session listing empty, events silently undelivered). [DocentWorkbenchSetup] runs this
+ * once per IDE run and raises a notification listing whatever no longer matches.
  *
  * Kept in lockstep with the reflection sites: [WorkbenchSessionDirectory] / [DocentEventNotifier] (the chat
- * virtual file's getters, the editor's `tab` field, the terminal tab's `sendText`).
+ * virtual file's getters, the editor's `tab` field, the terminal tab's `sendText`). The generic reflection
+ * primitives are shared ([AwbReflect]); the FQNs are the 262 ones ([AwbNames]).
  */
 internal object DocentSeamCheck {
-
-    private const val AGENT_CHAT_VFILE_FQN = "com.intellij.agent.workbench.chat.AgentChatVirtualFile"
-    private const val AGENT_CHAT_FILE_EDITOR_FQN = "com.intellij.agent.workbench.chat.AgentChatFileEditor"
 
     /** Human-readable descriptions of each seam this workbench build no longer satisfies; empty → all good. */
     fun failures(): List<String> = buildList {
@@ -21,14 +19,14 @@ internal object DocentSeamCheck {
         // forName (no init) is exactly what the FQN-matched reflection sites will resolve at use time.
         val cl = DocentSeamCheck::class.java.classLoader
 
-        val vfile = load(cl, AGENT_CHAT_VFILE_FQN)
+        val vfile = AwbReflect.load(cl, AwbNames.CHAT_VFILE_FQN)
         if (vfile == null) {
             add("AgentChatVirtualFile is gone (session listing and event push)")
         } else {
-            if (zeroArg(vfile, "getThreadId") == null && zeroArg(vfile, "getSessionId") == null) {
+            if (AwbReflect.zeroArg(vfile, "getThreadId") == null && AwbReflect.zeroArg(vfile, "getSessionId") == null) {
                 add("AgentChatVirtualFile has neither getThreadId() nor getSessionId() (can't identify open chat tabs)")
             }
-            if (zeroArg(vfile, "getProjectPath") == null) {
+            if (AwbReflect.zeroArg(vfile, "getProjectPath") == null) {
                 add("AgentChatVirtualFile.getProjectPath() is gone (can't scope chat tabs to the project)")
             }
             if (vfile.methods.none { it.name.startsWith("getProvider") && it.parameterCount == 0 }) {
@@ -36,7 +34,7 @@ internal object DocentSeamCheck {
             }
         }
 
-        val editor = load(cl, AGENT_CHAT_FILE_EDITOR_FQN)
+        val editor = AwbReflect.load(cl, AwbNames.CHAT_FILE_EDITOR_FQN)
         if (editor == null) {
             add("AgentChatFileEditor is gone (terminal event delivery)")
         } else {
@@ -50,9 +48,4 @@ internal object DocentSeamCheck {
             }
         }
     }
-
-    private fun load(cl: ClassLoader, fqn: String): Class<*>? =
-        runCatching { Class.forName(fqn, false, cl) }.getOrNull()
-
-    private fun zeroArg(c: Class<*>, name: String) = runCatching { c.getMethod(name) }.getOrNull()
 }

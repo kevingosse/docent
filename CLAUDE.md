@@ -50,7 +50,14 @@ what's left to build.
   embedded editors), **not** JCEF.
 - `instrumentCode` and `buildSearchableOptions` are disabled (Kotlin-only, no custom Settings) — see
   the comments in `build.gradle.kts`.
-- Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-*.zip`.
+- **Dual build variants** since 0.5.0: 2026.3 renamed the entire AWB API (every type moved to `com.intellij.air.*`)
+  under the same plugin id, so the AWB seam is compiled per target — `-PawbTarget=262` (default) or
+  `263` selects the `src/awb262|awb263` twin source tree, `docent-awb.xml` variant, dependency
+  coordinates, `-262|-263` version suffix and since/until-build range. Shared AWB-free code stays in
+  `src/main`. Full story: `docs/AWB-2026.3-COMPAT.md` (Resolution); the member-exact 262→263 API map
+  (`AWB-263-API-MAP.md`) is kept **outside the repo** (local-only, next to the compile-classpath dir).
+- Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-*-262.zip` (default 262
+  variant; `-PawbTarget=263` needs an AWB 263 source — see gradle.properties).
   Dev run: `./gradlew runRider` (launches local Rider with the plugin, no SDK download) then
   **Tools → Open Docent Review**. `./gradlew runIde` uses the IC sandbox but lacks C#/C++ nav.
 

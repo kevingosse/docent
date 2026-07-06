@@ -20,22 +20,19 @@ import com.kevingosse.docent.SessionLaunchOption
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Starts a brand-new workbench session seeded with an initial prompt (the UI's "Start a new agent session"
- * option in `ui/DocentNavPanel`). We launch with no `targetThreadId`, so the workbench creates a fresh session;
- * the initial prompt tells it to call `docent_resume_review`, and the [DocentLaunchContributor] injects its
- * sessionToken — so the agent arms the review and pins itself as the push target without the UI ever needing
- * the new session's id. This is the reliable path for a not-yet-started session (which has no id to target).
+ * **262 build variant.** Starts a brand-new workbench session seeded with an initial prompt (the UI's "Start a
+ * new agent session" option in `ui/DocentNavPanel`). We launch with no `targetThreadId`, so the workbench
+ * creates a fresh session; the initial prompt tells it to call `docent_resume_review`, and the
+ * [DocentLaunchContributor] injects its sessionToken.
  *
  * [launchOptions] mirrors the workbench's own "new session" menu: its **launch profiles** — the built-in
- * standard/YOLO entries per provider (CLI-availability-gated, exactly as the workbench enables them) plus any
- * user-defined profiles — filtered to the providers the Docent can drive (Claude, Codex; Junie/Pi/OpenCode have
- * no wired MCP path + delivery mode). Launching passes the profile id through [AgentPromptLaunchRequest], so a
- * user profile's model / reasoning settings apply exactly as they would from the workbench itself.
+ * standard/YOLO entries per provider (CLI-availability-gated) plus any user-defined profiles — filtered to the
+ * providers the Docent can drive (Claude, Codex). Launching passes the profile id through
+ * [AgentPromptLaunchRequest], so a user profile's model / reasoning settings apply.
  *
  * Uses the same `AgentPromptLaunchers.find().launch(...)` bridge as [DocentEventNotifier]. `@Internal`/unstable
  * workbench API → lives in the optional, gated `awb/` module; wrapped defensively. The profile pipeline is
- * *compiled* against the installed workbench (loud at build time if it changes); if it fails at runtime we fall
- * back to plain provider launches rather than losing the feature.
+ * *compiled* against the installed workbench; if it fails at runtime we fall back to plain provider launches.
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
