@@ -8,10 +8,9 @@ on:
         required: true
         type: string
 
-# --- Single universal artifact release (see build.gradle.kts header) -------------------------------
 # One artifact built against the Agent Workbench air.* API, attached to one GitHub Release. It loads on
-# both 2026.2 EAP9+ (build 262.8665+) and all of 2026.3. Rider + the workbench are downloaded (see
-# build.gradle.kts / gradle.properties).
+# both 2026.2 EAP9+ and all of 2026.3 (see build.gradle.kts header). Rider + the workbench are
+# downloaded (see build.gradle.kts / gradle.properties).
 jobs:
   release:
     runs-on: ubuntu-latest

@@ -1,9 +1,9 @@
 package com.kevingosse.docent.awb
 
 /**
- * The generic (AWB-free) reflection primitives shared by the per-variant reflective seams
+ * The generic (AWB-free) reflection primitives shared by the reflective seams
  * (`DocentSeamCheck`, `WorkbenchSessionDirectory`, `DocentEventNotifier`). The *targets* these resolve
- * (class FQNs, getter shapes) differ 262↔263 and live per-variant (see `AwbNames` + each seam file); the
+ * (class FQNs, getter shapes) live alongside those seams in `src/awb` (see `AwbNames` + each seam file); the
  * mechanics of loading a class or invoking a zero-arg getter do not, so they exist once here.
  */
 internal object AwbReflect {

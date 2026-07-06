@@ -82,19 +82,18 @@ Workbench integration ships as **optional modules** gated on `com.intellij.mcpSe
 - **Release engineering:** CI/release builds are pinned to **2026.2-EAP8-SNAPSHOT** (= build
   262.8377, the exact local dev base and AWB pin) instead of the rolling `2026.2-SNAPSHOT`; README
   rewritten as a first-user install/usage guide.
-- **Dual build variants for 2026.3 / build 263 (0.5.0, user-verified on a real 2026.3).** 2026.3
-  renamed the whole AWB API (`com.intellij.air.*`, Session→Thread, both launch EPs) under the *same*
-  plugin id, so one binary can't serve both. The plugin now ships two artifacts of the same id, split
-  by `-PawbTarget=262|263` (versions `X.Y.Z-262` until `262.*` / `X.Y.Z-263` since 263; the
-  Marketplace serves the right one and IDE upgrades auto-offer the matching version). Shared code
-  (incl. all launch-injection surgery, `awb/LaunchInjection.kt`) compiles into both; the AWB-touching
-  parts are per-variant twins in `src/awb262|awb263`. Verified live: on a 2026.3 IDE with a 263 AWB
-  (from CI), 0.4.6 reproduces the reported `NoClassDefFoundError` balloon and **0.5.0-263 works**
-  (the renamed EP accepts our contributor despite its module's `visibility="internal"`). Still to
-  exercise in anger: the reflective editor→terminal-tab seam during a full live review. CI/release
-  263 legs sit behind the `AWB263_MARKETPLACE_VERSION` repo variable — flip it when AWB 263
-  publishes. Full story: `docs/AWB-2026.3-COMPAT.md` (Resolution); the member-exact API map
-  (`AWB-263-API-MAP.md`) is local-only, kept outside the repo.
+- **Single universal artifact for the air.* AWB API (0.5.2, released & user-verified on both 262
+  EAP9+ and 2026.3).** 2026.3 renamed the whole AWB API (`com.intellij.air.*`, Session→Thread, both
+  launch EPs) under the *same* plugin id — and that same rework then landed mid-262-line (Rider EAP9,
+  build 262.8665). The air.* API is **byte-identical** across 262.8665 and 263.1174 for every type the
+  seam touches (`javap -public` diff, 2026-07-06), and no AWB 263 exists on any public channel (so CI
+  couldn't build a native 263 anyway). Both facts point one way: compile ONE binary against air.* and
+  let each IDE supply its own AWB at runtime. The old `-PawbTarget=262|263` split, the `src/awb262|awb263`
+  twin trees, and all `*263` gradle/CI knobs are gone; the AWB-touching seam is one `src/awb` tree, shared
+  AWB-free code (incl. launch-injection surgery, `awb/LaunchInjection.kt`) stays in `src/main`. Ships as one
+  zip, `since-build 262.8665` / `until-build 263.*` — the Marketplace serves it to any IDE in that range.
+  History (0.5.0 dual-variant era, live 263 verification): `docs/AWB-2026.3-COMPAT.md`; the member-exact
+  API map (`AWB-263-API-MAP.md`) is local-only, kept outside the repo.
 
 **Known constraint:** on **.slnx** solutions the workbench's persisted session store has empty
 thread lists (AWB bug), so the supported `AgentPromptLaunchers` push can't find the target thread.

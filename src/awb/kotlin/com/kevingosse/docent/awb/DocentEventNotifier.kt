@@ -17,11 +17,11 @@ import com.kevingosse.docent.EventNotifier
 import com.kevingosse.docent.ReviewEvent
 
 /**
- * **263 (2026.3) build variant.** Pushes a reviewer event into an agent's existing AWB thread — used to
- * wake a thread that isn't in a turn (the `REVIEW_RESUMED` / `START_REVIEW` events). Same two channels as the
- * 262 twin: (1) type into the live open thread-view terminal, (2) the prompt-launcher bridge with `targetThreadId`.
+ * Pushes a reviewer event into an agent's existing AWB thread — used to
+ * wake a thread that isn't in a turn (the `REVIEW_RESUMED` / `START_REVIEW` events). Two channels:
+ * (1) type into the live open thread-view terminal, (2) the prompt-launcher bridge with `targetThreadId`.
  *
- * Ported to AWB-263-API-MAP.md (local-only, not committed) §B.6/§C:
+ * See AWB-263-API-MAP.md (local-only, not committed) §B.6/§C for the pre-rework mapping:
  *  - Prompt types moved to `com.intellij.air.prompt.core`; `AgentPromptLauncherBridge.launch(...)` is now
  *    **`suspend`**, so we bridge the non-suspend [notifyAgent] via [runBlockingCancellable] (the platform's
  *    cancellation-aware blocking bridge). NB: the 262 `launch(...)` was already a blocking call made from these

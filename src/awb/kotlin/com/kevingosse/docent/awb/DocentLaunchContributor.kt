@@ -7,15 +7,15 @@ import com.intellij.air.threads.launch.McpStreamUrlProvider
 import com.intellij.openapi.diagnostic.logger
 
 /**
- * **263 (2026.3) build variant.** Injects the [DocentProtocolPrompt] into an AWB-launched agent's
+ * Injects the [DocentProtocolPrompt] into an AWB-launched agent's
  * system/base instructions at launch, so the agent knows the Code Review Docent exists and when to use its
  * `docent_*` tools **without the human prompting it**.
  *
- * Registered on the renamed 263 EP `com.intellij.air.threadLaunchContributor` (in the optional, gated
+ * Registered on the air.* EP `com.intellij.air.threadLaunchContributor` (in the optional, gated
  * `docent-awb.xml`), mirroring the bundled `AirMcpConfigLaunchContributor`. This is the thin EP-interface
- * adapter over the shared [LaunchInjection]; only the interface shape differs from the 262 twin.
+ * adapter over the shared [LaunchInjection].
  *
- * Ported strictly to AWB-263-API-MAP.md (local-only, not committed) §B.2 / §G:
+ * See AWB-263-API-MAP.md (local-only, not committed) §B.2 / §G:
  *  - The EP interface is now a `fun interface AgentThreadLaunchContributor` whose `contribute(...)` **gained a
  *    `projectDirectory: String?` parameter** (2nd position) and renamed `sessionId`→`threadId`. A regular class
  *    overriding the single method still satisfies a `fun interface`.

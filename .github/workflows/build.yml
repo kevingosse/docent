@@ -10,11 +10,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# --- Single universal artifact (see build.gradle.kts header) --------------------------------------
-# The plugin ships as ONE artifact built against the Agent Workbench air.* API. It loads on both
-# 2026.2 EAP9+ (build 262.8665+) and all of 2026.3 (the air.* API is identical across the two, and
-# there is no separately-buildable AWB 263 to target anyway). No local Rider / Agent Workbench on the
-# runner, so the build downloads the Rider build named by `riderVersion` and resolves the workbench
+# The plugin ships as ONE artifact built against the Agent Workbench air.* API (see build.gradle.kts
+# header for why one binary covers both 2026.2 EAP9+ and 2026.3). No local Rider / Agent Workbench on
+# the runner, so the build downloads the Rider build named by `riderVersion` and resolves the workbench
 # from the Marketplace at `agentWorkbenchVersion` (see build.gradle.kts / gradle.properties).
 jobs:
   build:

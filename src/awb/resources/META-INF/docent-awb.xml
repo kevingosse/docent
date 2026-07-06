@@ -1,21 +1,19 @@
 <idea-plugin>
-    <!-- 263 (2026.3) build variant. Loaded only when com.intellij.agent.workbench is present (the AWB
-         plugin ID is UNCHANGED on 263 — only the code namespace/types were renamed to the com.intellij.air.*
-         root; see AWB-263-API-MAP.md (local-only, not committed) §0). Installs the Docent's workbench seams (thread directory + push
-         notifier) at project open so "Connect agent…" and the review push path are available whenever AWB is present.
+    <!-- Loaded only when com.intellij.agent.workbench is present. Installs the Docent's workbench seams (thread
+         directory + push notifier) at project open so "Connect agent…" and the review push path are available
+         whenever AWB is present.
 
-         NB: we do NOT enable the direct-HTTP MCP path (air.mcp.use.direct.http, the renamed
-         agent.workbench.mcp.use.direct.http). It defaults to false → the agent reaches the IDE MCP server via
-         the user's .mcp.json (ij-proxy stdio). See DocentWorkbenchSetup. -->
+         NB: we do NOT enable the direct-HTTP MCP path (air.mcp.use.direct.http). It defaults to false → the
+         agent reaches the IDE MCP server via the user's .mcp.json (ij-proxy stdio). See DocentWorkbenchSetup. -->
     <extensions defaultExtensionNs="com.intellij">
-        <!-- ProjectActivity (platform EP; unchanged 262→263). -->
+        <!-- ProjectActivity (platform EP). -->
         <postStartupActivity implementation="com.kevingosse.docent.awb.DocentWorkbenchSetup"/>
     </extensions>
 
-    <!-- Inject the Docent protocol into an AWB-launched agent's system prompt at launch. The EP was RENAMED on
-         263: com.intellij.agent.workbench / sessionLaunchContributor → com.intellij.air / threadLaunchContributor
-         (interface com.intellij.air.threads.launch.AgentThreadLaunchContributor). Verbatim from
-         AWB-263-API-MAP.md (local-only, not committed) §E; mirrors the bundled AirMcpConfigLaunchContributor registration. -->
+    <!-- Inject the Docent protocol into an AWB-launched agent's system prompt at launch, via the air.* EP
+         com.intellij.air / threadLaunchContributor (interface
+         com.intellij.air.threads.launch.AgentThreadLaunchContributor); mirrors the bundled
+         AirMcpConfigLaunchContributor registration. -->
     <extensions defaultExtensionNs="com.intellij.air">
         <threadLaunchContributor implementation="com.kevingosse.docent.awb.DocentLaunchContributor"/>
     </extensions>

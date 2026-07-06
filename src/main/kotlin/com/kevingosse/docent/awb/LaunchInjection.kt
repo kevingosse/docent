@@ -9,20 +9,19 @@ import com.kevingosse.docent.mcp.DocentMcpEndpoint
 
 /**
  * The delicate, **AWB-free** heart of the launch-injection path — extracted from `DocentLaunchContributor`
- * so it exists ONCE across both build variants (262 / 263). Every function here operates on
- * `List<String>` / `String` / the platform-clean `DocentReviewService`, and touches **no** Agent
- * Workbench type. The per-variant `DocentLaunchContributor` is now just the thin EP-interface
- * adapter: it unpacks its variant's `AgentSession*` / `AgentThread*` launch objects into plain strings,
- * calls in here, and repacks the result.
+ * so it lives in the platform-clean `src/main` rather than the AWB-touching `src/awb` seam. Every function
+ * here operates on `List<String>` / `String` / the platform-clean `DocentReviewService`, and touches **no**
+ * Agent Workbench type. `DocentLaunchContributor` is just the thin EP-interface adapter: it unpacks the
+ * `AgentThread*` launch objects into plain strings, calls in here, and repacks the result.
  *
  * This is the most fragile code in the plugin (command-line surgery whose failure silently breaks the
- * agent handoff or corrupts a launch), so keeping it in a single shared place — identical behavior on
- * both variants — is deliberate. See the per-variant `DocentLaunchContributor` for the surrounding flow
- * and the original narration of *why* each knob is injected.
+ * agent handoff or corrupts a launch), so keeping it in a single shared place is deliberate. See
+ * `DocentLaunchContributor` for the surrounding flow and the original narration of *why* each knob is
+ * injected.
  *
  * NB: `registerPushTarget` news up `DocentEventNotifier` / `WorkbenchSessionDirectory` /
- * `WorkbenchAgentLauncher`. Those classes are declared per-variant with the SAME package + name, so this
- * shared reference resolves against whichever variant source set is compiled in — no AWB type leaks here.
+ * `WorkbenchAgentLauncher` — the AWB-touching seams over in `src/awb`. This shared reference stays
+ * AWB-free (it only names those classes); no AWB type leaks here.
  */
 internal object LaunchInjection {
 
@@ -135,9 +134,8 @@ internal object LaunchInjection {
      * This session's workbench thread id: the [sessionId] param, else the spec's [preallocatedId], else the
      * id already on the command line (Claude's `--session-id <id>`, or Codex's `resume <id>`). Null if none.
      *
-     * The [preallocatedId] is unpacked by the per-variant contributor from its launch spec (262:
-     * `preallocatedSessionId`; 263: `preallocatedThreadId`) — the only field-name difference, kept in the
-     * variant so this stays AWB-free.
+     * The [preallocatedId] is unpacked by [DocentLaunchContributor] from the air.* launch spec's
+     * `preallocatedThreadId`, so this function stays AWB-free.
      */
     fun resolveThreadId(sessionId: String?, preallocatedId: String?, command: List<String>): String? =
         sessionId?.takeIf { it.isNotBlank() }

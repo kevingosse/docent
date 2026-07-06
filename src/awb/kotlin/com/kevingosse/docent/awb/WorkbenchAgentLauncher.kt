@@ -19,10 +19,10 @@ import com.kevingosse.docent.SessionLaunchOption
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * **263 (2026.3) build variant.** Starts a brand-new AWB thread seeded with an initial prompt (the UI's
- * "Start a new agent session" option). Same behavior as the 262 twin; only the 263 API shapes differ.
+ * Starts a brand-new AWB thread seeded with an initial prompt (the UI's
+ * "Start a new agent session" option).
  *
- * Ported to AWB-263-API-MAP.md (local-only, not committed) §B.4/§B.6/§G:
+ * See AWB-263-API-MAP.md (local-only, not committed) §B.4/§B.6/§G:
  *  - Menu pipeline renamed + moved to `com.intellij.air.threads`
  *    (`buildAgentThreadLaunchProfileMenuModel` / `resolveAgentThreadLaunchProfileItems` / `launchProfileActionText`).
  *  - `AgentThreadLaunchProfileStateService` moved to `com.intellij.air.threads.state`.

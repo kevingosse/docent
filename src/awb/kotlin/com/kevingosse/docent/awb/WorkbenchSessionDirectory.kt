@@ -13,11 +13,11 @@ import com.kevingosse.docent.AgentSessionDirectory
 import com.kevingosse.docent.AgentSessionInfo
 
 /**
- * **263 (2026.3) build variant.** Lists the live AWB agent threads the UI can connect a loaded Trail to
- * (the "Connect agent…" picker). Same two-source merge as the 262 twin — open thread-view tabs (reflected) +
+ * Lists the live AWB agent threads the UI can connect a loaded Trail to
+ * (the "Connect agent…" picker). Two-source merge — open thread-view tabs (reflected) +
  * the persisted store — filtered to the providers the Docent can drive (Claude, Codex).
  *
- * Ported to AWB-263-API-MAP.md (local-only, not committed) §B.1/§B.3/§B.5/§C:
+ * See AWB-263-API-MAP.md (local-only, not committed) §B.1/§B.3/§B.5/§C for the pre-rework mapping:
  *  - `AgentSessionProvider`→`AgentThreadProvider` (no `.CLAUDE`/`.CODEX`; built via `from("claude"|"codex")`).
  *  - `AgentSessionProviders`→`AgentThreadProviders`; icons relocated to `descriptor.presentation.monochromeIcon`.
  *  - `AgentSessionsStateStore`→`AgentThreadsStateStore` (pkg `com.intellij.air.threads.state`); state shape 1:1.

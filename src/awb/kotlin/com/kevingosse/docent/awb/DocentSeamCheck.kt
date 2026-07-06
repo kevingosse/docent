@@ -1,23 +1,23 @@
 package com.kevingosse.docent.awb
 
 /**
- * **263 (2026.3) build variant.** One-shot self-check of the `@Internal` 263 APIs the Docent reaches
+ * One-shot self-check of the `@Internal` air.* APIs the Docent reaches
  * **by reflection** (T2 in docs/ASSESSMENT.md). [DocentWorkbenchSetup] runs this once per IDE run and raises a
- * notification listing whatever no longer matches, so a 263 update that renames/relocates a reflected member
+ * notification listing whatever no longer matches, so an AWB update that renames/relocates a reflected member
  * surfaces loudly instead of as "mysteriously nothing happens".
  *
- * Ported to AWB-263-API-MAP.md (local-only, not committed) §C — materially restructured, not just renamed:
- *  - The vfile / editor types moved under `com.intellij.air.thread.view.*` ([AwbNames]).
- *  - `AgentThreadViewFileEditor` **no longer has a `tab` field** (content/surface abstraction), so — unlike the
- *    262 twin — we do NOT probe for `tab`. Its absence is EXPECTED on 263; probing it would false-alarm.
- *  - The vfile `provider` getter is now the plain non-mangled `getProvider()` returning a boxed
- *    `AgentThreadProvider?` (262 was a name-mangled value-class accessor returning String).
+ * Reflects the air.* API (see AWB-263-API-MAP.md, local-only, not committed, §C for the pre-rework mapping):
+ *  - The vfile / editor types live under `com.intellij.air.thread.view.*` ([AwbNames]).
+ *  - `AgentThreadViewFileEditor` has **no `tab` field** (content/surface abstraction), so we do NOT probe for
+ *    `tab`; probing it would false-alarm.
+ *  - The vfile `provider` getter is the plain non-mangled `getProvider()` returning a boxed
+ *    `AgentThreadProvider?`.
  *  - `sendText`'s 3-arg signature is unchanged but lives on [AwbNames.TERMINAL_TAB_FQN]; the editor→tab
  *    traversal itself is UNVERIFIED (see [DocentEventNotifier]) — we can only confirm the target method exists.
  */
 internal object DocentSeamCheck {
 
-    /** Human-readable descriptions of each seam this 263 build no longer satisfies; empty → all good. */
+    /** Human-readable descriptions of each seam this build no longer satisfies; empty → all good. */
     fun failures(): List<String> = buildList {
         val cl = DocentSeamCheck::class.java.classLoader
 
