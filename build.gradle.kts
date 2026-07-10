@@ -20,6 +20,11 @@ plugins {
 // let each IDE supply its own AWB at runtime. The Marketplace serves it to any IDE in [262.8665, 263.*] (see
 // the since/until-build below). Early-262 EAPs (< 262.8665, old API) are intentionally dropped.
 //
+// AWB 263.1445 then changed a few air.* signatures (spec + provider value-class renames — see
+// docs/AWB-2026.3-COMPAT.md, 2026-07-10 update). Still one binary: the seam carries both generations
+// (a hand-mangled second `contribute` + mangle-prefix reflection), helped by the compile-only awbStub
+// source set below.
+//
 // Source layout: AWB-free code stays in src/main; the AWB-touching code (the air.* seam) lives in src/awb.
 val awbBuild = "262.8665" // floor: first build carrying the air.* API (2026.2 EAP9)
 
@@ -101,6 +106,15 @@ sourceSets {
     named("main") {
         resources.srcDir("src/awb/resources")
     }
+    // Compile-only stubs for AWB types that exist ONLY in builds newer than the 262.8665 compile base —
+    // currently just the 263.1445 `AgentThreadLaunchSpec` that DocentLaunchContributor's hand-mangled
+    // 263 `contribute` overload needs in its JVM descriptor (see that class). Java-only (no Kotlin stdlib
+    // needed), no dependencies, and wired below as compileOnly so it is never bundled in the plugin zip:
+    // at runtime the stubbed FQN resolves to the real class from the installed Agent Workbench.
+    create("awbStub")
+}
+dependencies {
+    compileOnly(sourceSets["awbStub"].output)
 }
 
 intellijPlatform {

@@ -4,7 +4,6 @@ import com.intellij.air.prompt.core.AgentPromptInitialMessageRequest
 import com.intellij.air.prompt.core.AgentPromptLaunchProfile
 import com.intellij.air.prompt.core.AgentPromptLaunchRequest
 import com.intellij.air.prompt.core.AgentPromptLaunchers
-import com.intellij.air.shared.core.thread.AgentThreadProvider
 import com.intellij.air.threads.buildAgentThreadLaunchProfileMenuModel
 import com.intellij.air.threads.launchProfileActionText
 import com.intellij.air.threads.resolveAgentThreadLaunchProfileItems
@@ -22,15 +21,18 @@ import java.util.concurrent.ConcurrentHashMap
  * Starts a brand-new AWB thread seeded with an initial prompt (the UI's
  * "Start a new agent session" option).
  *
- * See AWB-263-API-MAP.md (local-only, not committed) §B.4/§B.6/§G:
- *  - Menu pipeline renamed + moved to `com.intellij.air.threads`
- *    (`buildAgentThreadLaunchProfileMenuModel` / `resolveAgentThreadLaunchProfileItems` / `launchProfileActionText`).
- *  - `AgentThreadLaunchProfileStateService` moved to `com.intellij.air.threads.state`.
- *  - Icons relocated: `descriptor.presentation.icon`; the menu item exposes a convenience `item.icon`.
- *  - `AgentPromptLaunchRequest` is restructured around a single required `launchProfile`; `AgentPromptGenerationSettings`
- *    and `AgentPromptLaunchProfile.generationSettings` are GONE (model options are profile fields now), so the
- *    generationSettings line is dropped. For the plain-provider fallback we synthesize a minimal profile.
- *  - `AgentPromptLauncherBridge.launch(...)` is now `suspend` → bridged with [runBlockingCancellable].
+ * Version notes (262.8665 air.* baseline vs the 263.1445 provider→agent rework):
+ *  - The launch-profile menu pipeline ([profileOptions]) is compiled against the 262 API
+ *    (`AgentThreadProviders` + `buildAgentThreadLaunchProfileMenuModel` / `resolveAgentThreadLaunchProfileItems`).
+ *    263.1445 deleted the provider-descriptor registry and reshaped `resolveAgentThreadLaunchProfileItems`
+ *    (new package, new params, new item type), so on 263.1445+ [profileOptions] dies on classloading, the
+ *    `runCatching` in [launchOptions] eats it, and the picker degrades to the plain-provider fallback below
+ *    (new Claude/Codex sessions still launch — user-defined launch profiles just don't show). Re-porting the
+ *    profile menu onto the 263 `AgentRegistry`/`AgentMenuModel` pipeline is a known follow-up.
+ *  - `startSession` (`AgentPromptLaunchRequest`/`AgentPromptLaunchers`) is UNCHANGED across the two —
+ *    verified by compiling this file against 263.1445.
+ *  - Provider icons: version split lives in [AwbAgentIcons].
+ *  - `AgentPromptLauncherBridge.launch(...)` is `suspend` → bridged with [runBlockingCancellable].
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
@@ -48,7 +50,7 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                 id = provider,
                 label = "New ${provider.replaceFirstChar { it.titlecase() }} session",
                 provider = provider,
-                icon = runCatching { AgentThreadProviders.find(AgentThreadProvider.from(provider))?.presentation?.icon }.getOrNull(),
+                icon = AwbAgentIcons.iconFor(provider, monochrome = false),
             )
         }
     }

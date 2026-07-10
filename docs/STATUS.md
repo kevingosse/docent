@@ -12,6 +12,13 @@ built* lives in the code and its comments, not here.
 > inherited stale "not click-tested" claims from the previous STATUS — its judgment stands, its
 > facts don't all.
 
+> **2026-07-10, 0.6.0:** Agent Workbench 263.1445 (IDEA 2026.3 dev line) changed several `air.*`
+> signatures, and 0.5.2's stale launch-contributor registration was failing **every** AWB thread
+> launch there (`AbstractMethodError`). The single artifact now spans both API generations —
+> dual-mangled `contribute`, reflective provider getters, seam-check tripwire. Details:
+> `docs/AWB-2026.3-COMPAT.md` (2026-07-10 update). Known degradation on 263.1445+: the session
+> picker shows plain provider launches instead of AWB launch profiles.
+
 ## Where we are
 
 The v0 loop is **built, click-tested, and used on real changes**. It is **diff-centric**: a
