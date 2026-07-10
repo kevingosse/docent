@@ -19,6 +19,14 @@ built* lives in the code and its comments, not here.
 > `docs/AWB-2026.3-COMPAT.md` (2026-07-10 update). Known degradation on 263.1445+: the session
 > picker shows plain provider launches instead of AWB launch profiles.
 
+> **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
+> (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
+> `mcp_servers.*` overrides its app-server doesn't have — and the workbench spawns that app-server
+> itself with no contributor hook, so the server side can never match. Fix: skip the
+> `mcp_servers.docent.*` injection on remote-resume commands (`LaunchInjection.injectCodexConfig`);
+> `developer_instructions` still injected. Trade-off: resumed Codex sessions have no `docent_*`
+> tools until the CLI bug is fixed upstream (reported). New sessions and Claude are unaffected.
+
 ## Where we are
 
 The v0 loop is **built, click-tested, and used on real changes**. It is **diff-centric**: a

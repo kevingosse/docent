@@ -80,13 +80,22 @@ internal object LaunchInjection {
      *    config, additively to whatever `~/.codex/config.toml` already registers.
      *  - `tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` on our own [DOCENT_MCP_NAME] entry — lifts the 60s
      *    default that would otherwise kill a blocking docent_await_event.
+     *
+     * **Remote-resume exception:** no `mcp_servers.*` overrides on `codex resume --remote …` commands.
+     * Codex (verified standalone on 0.144.1, no IDE involved) deadlocks "Loading MCP (x/y)" forever when
+     * the resume *client* carries an `mcp_servers.*` override its app-server doesn't have — and the
+     * workbench spawns that app-server itself, with no contributor hook, so the server side can never
+     * match. Flag position (before/after the `resume` token) doesn't help; server-side or symmetric
+     * config works, client-only freezes. Until Codex fixes the handshake, a resumed tab without docent
+     * tools beats a frozen one. `developer_instructions` is proven harmless and stays.
      */
     fun injectCodexConfig(command: List<String>, threadId: String?, mcp: DocentMcpTarget?): List<String> {
         val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.AWAIT, threadId))
         val extra = mutableListOf(
             "-c", "developer_instructions=$protocol",
         )
-        if (mcp != null) {
+        val isRemoteResume = command.contains("resume") && command.contains("--remote")
+        if (mcp != null && !isRemoteResume) {
             extra += listOf(
                 "-c", "mcp_servers.$DOCENT_MCP_NAME.url=${mcp.url}",
                 "-c", "mcp_servers.$DOCENT_MCP_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
