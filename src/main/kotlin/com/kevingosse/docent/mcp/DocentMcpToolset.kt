@@ -316,7 +316,9 @@ class DocentMcpToolset : McpToolset {
         baseRef: String = "HEAD",
     ): String {
         val project = coroutineContext.projectOrNull ?: return errorJson("No IDE project is open.")
-        val base = project.basePath ?: return errorJson("The project has no base path on disk.")
+        val projectDir = project.basePath ?: return errorJson("The project has no base path on disk.")
+        // Paths and line ranges are relative to the git root (may differ from the IDE project dir in a monorepo).
+        val base = GitChangeSet.repoRoot(projectDir)
         val ref = baseRef.ifBlank { "HEAD" }
 
         val o = JsonObject()
@@ -400,7 +402,10 @@ class DocentMcpToolset : McpToolset {
         sessionToken: String = "",
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
-        val base = project.basePath ?: return "The project has no base path on disk."
+        val projectDir = project.basePath ?: return "The project has no base path on disk."
+        // Anchor paths / line lookups are git-root-relative; the Trail file, however, lives under the *project's*
+        // .idea (that's where the review loads it from), which may sit below the git root in a monorepo checkout.
+        val base = GitChangeSet.repoRoot(projectDir)
         val ref = baseRef.ifBlank { "HEAD" }
 
         val parsed = try {
@@ -424,7 +429,7 @@ class DocentMcpToolset : McpToolset {
             warnings.add("no decisions were recorded during authoring — the narrative may be reconstructed from memory rather than a log (DESIGN §7).")
         }
 
-        val file = Path.of(base, ".idea", "docent", "trail.json")
+        val file = Path.of(projectDir, ".idea", "docent", "trail.json")
         try {
             Files.createDirectories(file.parent)
             Files.writeString(file, GsonBuilder().setPrettyPrinting().create().toJson(trail))

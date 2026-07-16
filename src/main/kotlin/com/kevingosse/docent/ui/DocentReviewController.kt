@@ -126,10 +126,11 @@ class DocentReviewController(private val project: Project) {
      * Runs off the EDT (git calls); re-fires [Listener.onModelChanged] when ready.
      */
     private fun appendOtherChangesSection() {
-        val base = project.basePath ?: return
+        val projectDir = project.basePath ?: return
         val loaded = trail ?: return
         val beforeRef = loaded.beforeRef() ?: return // no diff base (no baseRef and no commit) → nothing to enumerate
         ApplicationManager.getApplication().executeOnPooledThread {
+            val base = GitChangeSet.repoRoot(projectDir)
             // What the narration already covers, per file: the union of focus spans across every section that
             // anchors it. A whole-file anchor (no ranges) marks the file fully covered → nothing left over.
             val coveredByPath = LinkedHashMap<String, MutableList<IntRange>>()

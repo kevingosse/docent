@@ -192,11 +192,12 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
 
     private fun ensureStats(j: Trail) {
         val key = j.beforeRef() ?: return
-        val base = project.basePath ?: return
+        val projectDir = project.basePath ?: return
         if (statsKey == key) return
         statsKey = key
         stats = null
         ApplicationManager.getApplication().executeOnPooledThread {
+            val base = GitChangeSet.repoRoot(projectDir)
             val perFile = GitChangeSet.numstat(base, key)
             val files = GitChangeSet.forTrail(base, j).size.coerceAtLeast(perFile.size)
             val computed = TrailStats(
@@ -496,11 +497,11 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         disposeDiff()
         host.removeAll()
 
-        val base = project.basePath
+        val projectDir = project.basePath
         val trail = controller.trail
         // "before" ref = baseRef (uncommitted work) or commit~1 (a committed Trail); see Trail.beforeRef().
         val beforeRef = trail?.beforeRef()
-        if (base == null) {
+        if (projectDir == null) {
             host.add(message("Open the reviewed solution first."), BorderLayout.CENTER)
             host.revalidate(); host.repaint(); return
         }
@@ -519,17 +520,20 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
         // keeps the diff navigable — Ctrl-click resolves through the IDE backend. For a committed Trail the
         // tree is checked out at `commit`; for a captured (uncommitted) one it carries the un-committed change.
         ApplicationManager.getApplication().executeOnPooledThread {
+            // Anchor paths are repo-root-relative; resolve against the git root, not the IDE project dir (which
+            // may be a subdirectory of the repo). Both `git show` and the working-tree VFS lookup use this.
+            val base = GitChangeSet.repoRoot(projectDir)
             val before = gitShow(beforeRef, path, base)
             ApplicationManager.getApplication().invokeLater(
                 {
-                    if (seq == diffSeq && diffHost === host) renderDiff(host, anchor, beforeRef, afterLabel, before)
+                    if (seq == diffSeq && diffHost === host) renderDiff(host, anchor, base, beforeRef, afterLabel, before)
                 },
                 ModalityState.any(),
             )
         }
     }
 
-    private fun renderDiff(host: JPanel, anchor: Anchor, beforeRef: String, afterLabel: String, before: String?) {
+    private fun renderDiff(host: JPanel, anchor: Anchor, base: String, beforeRef: String, afterLabel: String, before: String?) {
         host.removeAll()
         val factory = DiffContentFactory.getInstance()
         val name = anchor.path.substringAfterLast('/')
@@ -537,7 +541,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
 
         // "After" = the real file in the working tree (live document => navigation + highlighting). Missing =>
         // the commit deleted it; fall back to an empty side so it reads as all-removed.
-        val vfile = LocalFileSystem.getInstance().findFileByPath("${project.basePath}/${anchor.path}")
+        val vfile = LocalFileSystem.getInstance().findFileByPath("$base/${anchor.path}")
         val afterDoc = vfile?.let { FileDocumentManager.getInstance().getDocument(it) }
         val hasAfter = vfile != null && afterDoc != null
 

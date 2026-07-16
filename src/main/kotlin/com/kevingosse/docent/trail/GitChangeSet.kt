@@ -12,8 +12,25 @@ package com.kevingosse.docent.trail
  */
 object GitChangeSet {
 
-    /** A changed file: git's M/A/D/R/C status letter + a project-root-relative path. */
+    /** A changed file: git's M/A/D/R/C status letter + a **repo-root-relative** path. */
     data class Change(val status: String, val path: String)
+
+    /** Cache of IDE-project-dir → git repo root, so [repoRoot] spawns git at most once per project per session. */
+    private val repoRootCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * The git repository root that contains [projectDir] (`git -C <projectDir> rev-parse --show-toplevel`),
+     * with forward slashes as git prints them. **Everything paths-related here — and every Trail anchor path —
+     * is relative to *this* root, not to the IDE project dir**, which can sit in a subdirectory of the repo
+     * (a monorepo checkout: repo at `…/Ultimate`, project opened at `…/Ultimate/dotnet`). Resolve both git
+     * revisions (`git show`) and working-tree files (VFS lookups) against this. Falls back to [projectDir] when
+     * git can't answer (not a repo, git missing). Cached; safe to call repeatedly. Off-EDT like the rest — the
+     * first call per project spawns git.
+     */
+    fun repoRoot(projectDir: String): String = repoRootCache.getOrPut(projectDir) {
+        lines(projectDir, listOf("rev-parse", "--show-toplevel")).firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: projectDir
+    }
 
     /** Files changed by a fixed commit: `git diff --name-status commit~1 commit`. */
     fun committed(base: String, commit: String): List<Change> =
@@ -57,7 +74,7 @@ object GitChangeSet {
 
     /**
      * Per-file added/removed line counts vs the **working tree** (`git diff --numstat <beforeRef>`), keyed by
-     * project-root-relative path. Binary files (numstat prints "-") are skipped; renames ("a/{old => new}/b")
+     * repo-root-relative path. Binary files (numstat prints "-") are skipped; renames ("a/{old => new}/b")
      * are normalized to the new path. Purely *derived* — feeds the trailhead's scope line and the file chips
      * (docs/UI.md §4/§5) without adding anything to the Trail. Off-EDT, like the rest.
      */
