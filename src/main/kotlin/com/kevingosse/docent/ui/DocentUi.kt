@@ -206,10 +206,42 @@ object DocentUi {
         return if (oneLine.length > max) oneLine.take(max - 3) + "…" else oneLine
     }
 
-    /** Decode the handful of HTML entities the agents emit; `&amp;` last so it can't re-trigger others. */
-    fun decodeEntities(s: String): String =
-        s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-            .replace("&#39;", "'").replace("&apos;", "'").replace("&nbsp;", " ").replace("&amp;", "&")
+    /**
+     * Named HTML entities the agents emit in prose — punctuation, dashes, arrows, symbols. The `htmlPane`
+     * (JEditorPane) path decodes these natively; this table is what lets the lightweight [appendMarkup] path
+     * (comment cards + chat) match it. `&amp;` is handled *after* this map (see [decodeEntities]) so a decoded
+     * value can't re-trigger another entity.
+     */
+    private val NAMED_ENTITIES = mapOf(
+        "&lt;" to "<", "&gt;" to ">", "&quot;" to "\"", "&#39;" to "'", "&apos;" to "'", "&nbsp;" to " ",
+        "&mdash;" to "—", "&ndash;" to "–", "&hellip;" to "…",
+        "&lsquo;" to "‘", "&rsquo;" to "’", "&ldquo;" to "“", "&rdquo;" to "”",
+        "&laquo;" to "«", "&raquo;" to "»",
+        "&rarr;" to "→", "&larr;" to "←", "&harr;" to "↔", "&uarr;" to "↑", "&darr;" to "↓",
+        "&rArr;" to "⇒", "&hArr;" to "⇔",
+        "&times;" to "×", "&divide;" to "÷", "&minus;" to "−", "&plusmn;" to "±",
+        "&deg;" to "°", "&middot;" to "·", "&bull;" to "•",
+        "&copy;" to "©", "&reg;" to "®", "&trade;" to "™",
+        "&sect;" to "§", "&para;" to "¶", "&dagger;" to "†", "&Dagger;" to "‡",
+        "&prime;" to "′", "&Prime;" to "″", "&check;" to "✓", "&ge;" to "≥", "&le;" to "≤",
+    )
+
+    private val NUMERIC_ENTITY = Regex("&#(x?)([0-9a-fA-F]+);")
+
+    /**
+     * Decode the HTML entities the agents emit so the lightweight-markup surfaces (comment cards, chat) read
+     * the same as the `htmlPane` prose. Named entities from [NAMED_ENTITIES], then numeric (`&#8594;` /
+     * `&#x2192;`), then `&amp;` **last** so a decoded value can't re-trigger another entity.
+     */
+    fun decodeEntities(s: String): String {
+        var r = s
+        for ((name, ch) in NAMED_ENTITIES) r = r.replace(name, ch)
+        r = NUMERIC_ENTITY.replace(r) { m ->
+            val code = m.groupValues[2].toIntOrNull(if (m.groupValues[1].isEmpty()) 10 else 16)
+            if (code != null && Character.isValidCodePoint(code)) String(Character.toChars(code)) else m.value
+        }
+        return r.replace("&amp;", "&")
+    }
 
     // ---- shared components --------------------------------------------------------------------------
 

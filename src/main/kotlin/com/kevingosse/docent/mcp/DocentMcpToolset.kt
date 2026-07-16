@@ -344,6 +344,13 @@ class DocentMcpToolset : McpToolset {
                 "anchors:[{path, ranges?:[{start,end}], label?, comments?:[{line, anchorText, body}]}]}]}. Line " +
                 "numbers (ranges start/end and comment line) are 1-based and end-INCLUSIVE, against the CURRENT " +
                 "working-tree file. " +
+                "READABILITY — as important as the content itself: the reviewer READS this prose, so make it " +
+                "airy and scannable, never a wall of text. Break every narration (and the thesis) into SHORT " +
+                "paragraphs of 2–3 sentences, each wrapped in its own `<p>`…`</p>` — one idea per paragraph. Use " +
+                "`<ul><li>…</li></ul>` for any enumeration (steps, options, causes) instead of a long comma-run " +
+                "sentence. Prefer short sentences; put the key point first. A section whose narration is one dense " +
+                "block is WRONG even if the content is correct — split it. This applies to inline comment bodies " +
+                "too: several short `<p>` beat one long paragraph. " +
                 "LINE-NUMBER ACCURACY — do NOT guess line numbers from memory: " +
                 "(1) set each anchor's `ranges` from the `changedLineRanges` returned above (the exact changed " +
                 "spans for that file); " +
