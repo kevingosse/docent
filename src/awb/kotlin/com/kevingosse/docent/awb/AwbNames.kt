@@ -1,27 +1,35 @@
 package com.kevingosse.docent.awb
 
 /**
- * The reflective-FQN + provider-vocabulary constants for the Agent Workbench **air.\* API** (2026.2 EAP9+
- * and 2026.3, which share one API — see build.gradle.kts header). That rework moved the reflected
- * chat/terminal types under `com.intellij.air.thread.view.*` and renamed `Session`→`Thread` (see
- * AWB-263-API-MAP.md, local-only, not committed, §C). The inline `262:` notes below record the pre-rework
- * (< 262.8665) FQNs for reference. Centralized here so all reflected names live in one file.
+ * The reflective-FQN + agent-vocabulary constants for the Agent Workbench **air.\* API**, as of the layered
+ * rework in AWB `262.8665.20260723`: the flat `com.intellij.air.threads.*` / `com.intellij.air.prompt.core.*`
+ * namespaces were split into `air.backend.*` / `air.frontend.*` / `air.shared.*` layers (see
+ * docs/AWB-2026.3-COMPAT.md). Only the handful of names still reached **by reflection** live here — everything
+ * else is a normal compile-time reference now that the seam targets exactly one AWB generation.
+ *
+ * The thread-view types (vfile + editor) kept their `com.intellij.air.thread.view.*` package across the rework;
+ * the terminal tab moved into the frontend TUI layer.
  */
 internal object AwbNames {
-    /** The thread-view virtual file (open-tab thread identity), read reflectively.
-     *  262: `…agent.workbench.chat.AgentChatVirtualFile`. */
+    /** The thread-view virtual file (open-tab thread identity). Referenced statically by the seams; the FQN is
+     *  kept for [DocentSeamCheck]'s reflective probe. */
     const val CHAT_VFILE_FQN = "com.intellij.air.thread.view.AgentThreadViewVirtualFile"
 
-    /** The thread-view file editor. NB (map §C.2): its `tab` field is GONE on 263 — the editor now holds a
-     *  content/surface abstraction (`contentHost`/`activeContent`). 262: `…chat.AgentChatFileEditor`. */
+    /** The thread-view file editor. Its terminal hangs off a private content abstraction
+     *  (`activeContent`/`mountedContent`), which is the one thing the seams still reach reflectively. */
     const val CHAT_FILE_EDITOR_FQN = "com.intellij.air.thread.view.AgentThreadViewFileEditor"
 
-    /** The terminal-tab type carrying `sendText(text, shouldExecute, useBracketedPasteMode)` (map §C.3). On 263
-     *  the editor→tab traversal is UNVERIFIED, but the sendText target + its 3-arg signature are confirmed on
-     *  this type, so the seam check can at least confirm the method still exists. */
-    const val TERMINAL_TAB_FQN = "com.intellij.air.thread.tui.frontend.AgentThreadViewTerminalTab"
+    /** The terminal-tab type carrying `sendText(text, shouldExecute, useBracketedPasteMode)`.
+     *  Pre-20260723: `com.intellij.air.thread.tui.frontend.AgentThreadViewTerminalTab`. */
+    const val TERMINAL_TAB_FQN = "com.intellij.air.frontend.session.view.tui.AgentThreadViewTerminalTab"
 
-    /** Provider `.value` strings the Docent can drive (263 uses `AgentThreadProvider.from(...)`, no constants). */
+    /** The private [CHAT_FILE_EDITOR_FQN] fields holding an `AgentThreadViewContent`, newest-first. */
+    val EDITOR_CONTENT_FIELDS = listOf("activeContent", "mountedContent")
+
+    /** The private `AgentThreadViewTerminalContent` field holding the live [TERMINAL_TAB_FQN]. */
+    const val CONTENT_TERMINAL_TAB_FIELD = "terminalTab"
+
+    /** Agent ids (`AgentId.value`) the Docent can drive. */
     const val PROVIDER_CLAUDE = "claude"
     const val PROVIDER_CODEX = "codex"
 }

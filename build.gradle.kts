@@ -6,24 +6,22 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
-// --- Single universal artifact (Agent Workbench "air.*" API) -------------------------------------
-// Historically this shipped as two build variants (awb262 / awb263) because the 2026.3 release reworked the
-// whole Agent Workbench API — every type moved to the `com.intellij.air.*` namespace, Session→Thread, both
-// launch EPs renamed — while KEEPING the plugin id `com.intellij.agent.workbench`. That rework then landed
-// MID-262-LINE too: Rider EAP8 (build 262.8377) still had the old `com.intellij.platform.ai.agent.*` API,
-// but EAP9 (262.8665, AWB 262.8665.20260706) already carries the new `air.*` API — verified byte-identical
-// to the 2026.3 build (263.1174) for every type this plugin references (javap-diff, 2026-07-06).
-//
-// So the API split evaporated: 2026.2 (EAP9+) and 2026.3 now expose the SAME air.* surface. And there is NO
-// AWB 263 on any public channel (Marketplace newest = 262.8665.*), so CI cannot even download a dependency to
-// build a native 263 artifact. Both facts point the same way: compile ONE binary against the air.* API and
-// let each IDE supply its own AWB at runtime. The Marketplace serves it to any IDE in [262.8665, 263.*] (see
-// the since/until-build below). Early-262 EAPs (< 262.8665, old API) are intentionally dropped.
-//
-// AWB 263.1445 then changed a few air.* signatures (spec + provider value-class renames — see
-// docs/AWB-2026.3-COMPAT.md, 2026-07-10 update). Still one binary: the seam carries both generations
-// (a hand-mangled second `contribute` + mangle-prefix reflection), helped by the compile-only awbStub
-// source set below.
+// --- One artifact, one Agent Workbench generation (the "air.*" API) -----------------------------
+// The Agent Workbench API is `@Internal` and moves fast; the plugin id (`com.intellij.agent.workbench`) stays
+// the same across reworks, so a Marketplace update can silently swap the API under a running IDE. History:
+//   * 262.8377 and older: the pre-air `com.intellij.platform.ai.agent.*` / `agent.workbench.*` API.
+//   * 262.8665.20260706 (2026.2 EAP9): everything moved under `com.intellij.air.*`, Session→Thread. Verified
+//     byte-identical to the 2026.3 build (263.1174) for every type used here, so ONE binary covered both.
+//   * 263.1445: `AgentThreadTerminalLaunchSpec`→`AgentThreadLaunchSpec`, `AgentThreadProvider`→`AgentId`.
+//     Signatures only, same FQNs — 0.6.x spanned it with a hand-mangled second `contribute` + a compile-only
+//     stub source set.
+//   * 262.8665.20260723 (shipped to the 2026.2.0.1 release): the flat namespaces were split into
+//     `air.backend.*` / `air.frontend.*` / `air.shared.*` layers. The launch-EP INTERFACE moved with them, and
+//     a JVM class cannot implement a superinterface that doesn't exist, so spanning generations is over: as of
+//     0.7.0 the seam targets this layout only, and the dual-mangle machinery + awbStub are gone. Full map:
+//     docs/AWB-2026.3-COMPAT.md.
+// So: re-verify the seam (javap the installed AWB jars) whenever the workbench updates, and let
+// DocentSeamCheck report at runtime what a newer build broke.
 //
 // Source layout: AWB-free code stays in src/main; the AWB-touching code (the air.* seam) lives in src/awb.
 val awbBuild = "262.8665" // floor: first build carrying the air.* API (2026.2 EAP9)
@@ -106,15 +104,6 @@ sourceSets {
     named("main") {
         resources.srcDir("src/awb/resources")
     }
-    // Compile-only stubs for AWB types that exist ONLY in builds newer than the 262.8665 compile base —
-    // currently just the 263.1445 `AgentThreadLaunchSpec` that DocentLaunchContributor's hand-mangled
-    // 263 `contribute` overload needs in its JVM descriptor (see that class). Java-only (no Kotlin stdlib
-    // needed), no dependencies, and wired below as compileOnly so it is never bundled in the plugin zip:
-    // at runtime the stubbed FQN resolves to the real class from the installed Agent Workbench.
-    create("awbStub")
-}
-dependencies {
-    compileOnly(sourceSets["awbStub"].output)
 }
 
 intellijPlatform {
@@ -127,10 +116,11 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            // One artifact for the whole air.* window. Floor = 262.8665 (2026.2 EAP9, first build with the
-            // air.* API); anything below that has the old platform.ai.agent.* API and would fail at load, so
-            // it's deliberately excluded. Cap at 263.* so it also serves all of 2026.3 but can't wrongly match
-            // a hypothetical 264 that reworks the API again (revisit then).
+            // Floor = 262.8665 (2026.2 EAP9, first build with the air.* API); anything below has the old
+            // platform.ai.agent.* API and would fail at load, so it's deliberately excluded. Cap at 263.* is
+            // kept because the CORE review surface is platform-clean and works there — but note the AWB seam
+            // is compiled against the layered 20260723 API, so on an IDE carrying an older/newer workbench the
+            // seam degrades (loudly, via DocentSeamCheck) while the rest of the plugin keeps working.
             sinceBuild = awbBuild
             untilBuild = "263.*"
         }

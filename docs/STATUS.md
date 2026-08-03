@@ -14,10 +14,20 @@ built* lives in the code and its comments, not here.
 
 > **2026-07-10, 0.6.0:** Agent Workbench 263.1445 (IDEA 2026.3 dev line) changed several `air.*`
 > signatures, and 0.5.2's stale launch-contributor registration was failing **every** AWB thread
-> launch there (`AbstractMethodError`). The single artifact now spans both API generations —
-> dual-mangled `contribute`, reflective provider getters, seam-check tripwire. Details:
-> `docs/AWB-2026.3-COMPAT.md` (2026-07-10 update). Known degradation on 263.1445+: the session
-> picker shows plain provider launches instead of AWB launch profiles.
+> launch there (`AbstractMethodError`). 0.6.x spanned both API generations — dual-mangled `contribute`,
+> reflective provider getters, seam-check tripwire. **Superseded by 0.7.0 below.**
+
+> **2026-08-03, 0.7.0:** AWB `262.8665.20260723` (shipped with the Rider 2026.2.0.1 release, and pushed
+> as a routine Marketplace update onto 0.6.4 installs) re-layered the namespace into
+> `air.backend.*`/`air.frontend.*`/`air.shared.*` and **moved the launch EP interface**, which killed
+> launch injection, both push channels, "start a new agent session" and the agent icons (the seam-check
+> balloon fired on 2 of the 5 probes). Because the interface *moved*, one class can no longer implement
+> two generations, so 0.7.0 is a **clean retarget** to that layout: dual-mangle + `src/awbStub` deleted,
+> pushes on the public `AgentPromptBackendApi`, the launch-profile picker **re-ported** (custom profiles
+> work again, no longer degraded), the editor→terminal walk now verified against the real classes and
+> extracted to `AwbTerminalTab`. Details: `docs/AWB-2026.3-COMPAT.md` (2026-08-03 update). Trade-off:
+> the seam matches AWB 20260723+ only; on older air.* workbenches the core loads and the seam reports
+> itself broken. **Built and javap-verified; not yet click-tested in a live review.**
 
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
@@ -108,12 +118,15 @@ Workbench integration ships as **optional modules** gated on `com.intellij.mcpSe
   AWB-free code (incl. launch-injection surgery, `awb/LaunchInjection.kt`) stays in `src/main`. Ships as one
   zip, `since-build 262.8665` / `until-build 263.*` — the Marketplace serves it to any IDE in that range.
   History (0.5.0 dual-variant era, live 263 verification): `docs/AWB-2026.3-COMPAT.md`; the member-exact
-  API map (`AWB-263-API-MAP.md`) is local-only, kept outside the repo.
+  API map (`AWB-263-API-MAP.md`) is local-only, kept outside the repo. **Since 0.7.0 the *seam* inside
+  that one artifact targets a single AWB generation** (the layered `262.8665.20260723` API) — the core
+  surface still spans the whole build range.
 
 **Known constraint:** on **.slnx** solutions the workbench's persisted session store has empty
-thread lists (AWB bug), so the supported `AgentPromptLaunchers` push can't find the target thread.
-Worked around by typing into the session's open chat-tab terminal (`AgentChatFileEditor.tab.sendText`,
-reflectively) with the launcher push as fallback — this is the path that actually runs, and it works.
+thread lists (AWB bug), so the supported prompt-launch push (`AgentPromptBackendApi`) can't find the
+target thread. Worked around by typing into the thread's open tab terminal
+(`AgentThreadViewTerminalTab.sendText`, reached via `AwbTerminalTab`) with the launcher push as fallback —
+this is the path that actually runs, and it works.
 
 ## Direction (standing decisions)
 

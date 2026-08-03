@@ -1,14 +1,17 @@
 package com.kevingosse.docent.awb
 
-import com.intellij.air.prompt.core.AgentPromptInitialMessageRequest
-import com.intellij.air.prompt.core.AgentPromptLaunchProfile
-import com.intellij.air.prompt.core.AgentPromptLaunchRequest
-import com.intellij.air.prompt.core.AgentPromptLaunchers
-import com.intellij.air.threads.buildAgentThreadLaunchProfileMenuModel
+import com.intellij.air.frontend.core.agentCatalogLaunchTargetsSnapshot
+import com.intellij.air.frontend.core.agentCatalogSnapshot
+import com.intellij.air.frontend.launch.AgentThreadLaunchProfileStateService
+import com.intellij.air.frontend.launch.buildBuiltInLaunchProfiles
+import com.intellij.air.frontend.launch.resolveAgentThreadLaunchProfileItems
+import com.intellij.air.prompt.ui.buildEnabledAgentCatalogMenuModel
+import com.intellij.air.shared.prompt.AgentPromptBackendApi
+import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
+import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
+import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
 import com.intellij.air.threads.launchProfileActionText
-import com.intellij.air.threads.resolveAgentThreadLaunchProfileItems
-import com.intellij.air.threads.core.providers.AgentThreadProviders
-import com.intellij.air.threads.state.AgentThreadLaunchProfileStateService
+import com.intellij.air.threads.quickStartLabel
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.runBlockingCancellable
@@ -21,18 +24,16 @@ import java.util.concurrent.ConcurrentHashMap
  * Starts a brand-new AWB thread seeded with an initial prompt (the UI's
  * "Start a new agent session" option).
  *
- * Version notes (262.8665 air.* baseline vs the 263.1445 provider→agent rework):
- *  - The launch-profile menu pipeline ([profileOptions]) is compiled against the 262 API
- *    (`AgentThreadProviders` + `buildAgentThreadLaunchProfileMenuModel` / `resolveAgentThreadLaunchProfileItems`).
- *    263.1445 deleted the provider-descriptor registry and reshaped `resolveAgentThreadLaunchProfileItems`
- *    (new package, new params, new item type), so on 263.1445+ [profileOptions] dies on classloading, the
- *    `runCatching` in [launchOptions] eats it, and the picker degrades to the plain-provider fallback below
- *    (new Claude/Codex sessions still launch — user-defined launch profiles just don't show). Re-porting the
- *    profile menu onto the 263 `AgentRegistry`/`AgentMenuModel` pipeline is a known follow-up.
- *  - `startSession` (`AgentPromptLaunchRequest`/`AgentPromptLaunchers`) is UNCHANGED across the two —
- *    verified by compiling this file against 263.1445.
- *  - Provider icons: version split lives in [AwbAgentIcons].
- *  - `AgentPromptLauncherBridge.launch(...)` is `suspend` → bridged with [runBlockingCancellable].
+ * The launch-profile picker ([profileOptions]) mirrors the workbench's own new-thread menu, entirely on the
+ * frontend side: the agent catalog snapshot supplies the enabled agents, `AgentThreadLaunchProfileStateService`
+ * the user's profiles + ordering, and `resolveAgentThreadLaunchProfileItems` merges them into the same items the
+ * tool window shows (label via `launchProfileActionText`, icon already resolved on the item). If any of that
+ * fails, [launchOptions] degrades to plain per-agent launches — new sessions still start, custom profiles just
+ * don't appear.
+ *
+ * The launch itself goes through the backend RPC surface [AgentPromptBackendApi] (the frontend wrapper around it
+ * is Kotlin-`internal`); both `getInstance()` and `launchPrompt(...)` are `suspend` → bridged with
+ * [runBlockingCancellable].
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
@@ -41,36 +42,48 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
 
     override fun launchOptions(): List<SessionLaunchOption> {
         val options = runCatching { profileOptions() }
-            .onFailure { LOG.warn("Docent: couldn't read the AWB launch profiles; using plain provider launches", it) }
+            .onFailure { LOG.warn("Docent: couldn't read the AWB launch profiles; using plain agent launches", it) }
             .getOrNull()
         if (!options.isNullOrEmpty()) return options
-        // No usable profile (pipeline failed, or every supported CLI is unavailable): plain provider launches.
-        return SUPPORTED_PROVIDER_VALUES.map { provider ->
+        // No usable profile (pipeline failed, or every supported CLI is unavailable): plain per-agent launches.
+        return SUPPORTED_PROVIDER_VALUES.map { agentId ->
             SessionLaunchOption(
-                id = provider,
-                label = "New ${provider.replaceFirstChar { it.titlecase() }} session",
-                provider = provider,
-                icon = AwbAgentIcons.iconFor(provider, monochrome = false),
+                id = agentId,
+                label = "New ${agentId.replaceFirstChar { it.titlecase() }} session",
+                provider = agentId,
+                icon = AwbAgentIcons.iconFor(agentId, monochrome = false),
             )
         }
     }
 
-    /** The AWB launch-profile menu (built-ins + user profiles), filtered to supported providers. */
+    /** The AWB launch-profile menu (built-ins + user profiles), filtered to the agents the Docent can drive. */
     private fun profileOptions(): List<SessionLaunchOption> {
-        val descriptors = AgentThreadProviders.allProviders().filter { it.provider.value in SUPPORTED_PROVIDER_VALUES }
-        if (descriptors.isEmpty()) return emptyList()
-        val menuModel = buildAgentThreadLaunchProfileMenuModel(descriptors, project)
-        val userProfiles = service<AgentThreadLaunchProfileStateService>().getUserLaunchProfiles()
-            .filter { it.providerId in SUPPORTED_PROVIDER_VALUES }
-        return resolveAgentThreadLaunchProfileItems(menuModel, userProfiles)
-            .filter { it.menuItem.isEnabled } // the workbench grays these out (CLI missing); we just skip them
+        val agents = agentCatalogSnapshot().agents.filter { it.agentId.value in SUPPORTED_PROVIDER_VALUES }
+        if (agents.isEmpty()) return emptyList()
+        val menuModel = buildEnabledAgentCatalogMenuModel(project, agents)
+        val state = service<AgentThreadLaunchProfileStateService>()
+        val userProfiles = state.getUserLaunchProfiles().filter { it.effectiveAgentId in SUPPORTED_PROVIDER_VALUES }
+        val builtInProfiles = buildBuiltInLaunchProfiles(
+            menuModel = menuModel,
+            resolveName = { quickStartLabel(it) },
+            catalogLaunchTargets = agentCatalogLaunchTargetsSnapshot(),
+        )
+        return resolveAgentThreadLaunchProfileItems(
+            menuModel = menuModel,
+            userProfiles = userProfiles,
+            builtInProfiles = builtInProfiles,
+            agentDescriptors = agents,
+            hiddenBuiltInProfileIds = state.getHiddenBuiltInLaunchProfileIds(),
+            profileOrder = state.getLaunchProfileOrder(),
+        )
+            .filter { it.isEnabled } // the workbench grays these out (CLI missing); we just skip them
             .map { item ->
                 profilesById[item.profile.id] = item.profile
                 SessionLaunchOption(
                     id = item.profile.id,
                     label = launchProfileActionText(item),
-                    provider = item.profile.providerId,
-                    icon = item.icon, // 263: convenience field on the wrapper (icons relocated off the bridge)
+                    provider = item.profile.effectiveAgentId,
+                    icon = item.icon,
                 )
             }
     }
@@ -78,17 +91,13 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
     override fun startSession(initialPrompt: String, option: SessionLaunchOption): Boolean {
         return try {
             val base = project.basePath ?: return false
-            val bridge = AgentPromptLaunchers.find() ?: run {
-                LOG.info("Docent: no prompt-launcher bridge; can't start a new session")
-                return false
-            }
             // Re-resolve if the UI's option outlived the last build (profile ids are stable). Null → the fallback
-            // plain-provider option; synthesize a minimal profile carrying just the provider id (map §B.6).
+            // plain-agent option; synthesize a minimal profile carrying just the agent id.
             val profile = profilesById[option.id]
                 ?: runCatching { profileOptions() }.getOrNull()?.let { profilesById[option.id] }
             val launchProfile = profile ?: minimalProfile(providerIdOf(option.provider))
             val result = runBlockingCancellable {
-                bridge.launch(
+                AgentPromptBackendApi.getInstance().launchPrompt(
                     AgentPromptLaunchRequest(
                         launchProfile = launchProfile,
                         projectPath = base,
@@ -108,16 +117,16 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
     private companion object {
         private val LOG = logger<WorkbenchAgentLauncher>()
 
-        /** Provider `.value`s the Docent can drive; must stay in sync with
-         *  [WorkbenchSessionDirectory.SUPPORTED_PROVIDER_VALUES]. */
+        /** `AgentId.value`s the Docent can drive; must stay in sync with
+         *  [WorkbenchSessionDirectory]'s copy. */
         private val SUPPORTED_PROVIDER_VALUES = listOf(AwbNames.PROVIDER_CLAUDE, AwbNames.PROVIDER_CODEX)
 
-        /** Normalize an option's provider value to a supported provider id (default Claude). */
+        /** Normalize an option's agent id to a supported one (default Claude). */
         private fun providerIdOf(value: String): String =
             if (value == AwbNames.PROVIDER_CODEX) AwbNames.PROVIDER_CODEX else AwbNames.PROVIDER_CLAUDE
 
-        /** A minimal launch profile carrying just the provider id, for the plain-provider fallback (map §B.6). */
-        private fun minimalProfile(providerId: String): AgentPromptLaunchProfile =
-            AgentPromptLaunchProfile(id = "docent-new-$providerId", name = "Docent", providerId = providerId)
+        /** A minimal launch profile carrying just the agent id, for the plain-agent fallback. */
+        private fun minimalProfile(agentId: String): AgentPromptLaunchProfile =
+            AgentPromptLaunchProfile(id = "docent-new-$agentId", name = "Docent", agentId = agentId)
     }
 }

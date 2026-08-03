@@ -12,7 +12,7 @@
 
     <!-- Inject the Docent protocol into an AWB-launched agent's system prompt at launch, via the air.* EP
          com.intellij.air / threadLaunchContributor (interface
-         com.intellij.air.threads.launch.AgentThreadLaunchContributor); mirrors the bundled
+         com.intellij.air.backend.session.launch.AgentThreadLaunchContributor); mirrors the bundled
          AirMcpConfigLaunchContributor registration. -->
     <extensions defaultExtensionNs="com.intellij.air">
         <threadLaunchContributor implementation="com.kevingosse.docent.awb.DocentLaunchContributor"/>

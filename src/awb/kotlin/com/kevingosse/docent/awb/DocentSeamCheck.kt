@@ -1,23 +1,22 @@
 package com.kevingosse.docent.awb
 
 /**
- * One-shot self-check of the `@Internal` air.* APIs the Docent reaches
- * **by reflection** (T2 in docs/ASSESSMENT.md). [DocentWorkbenchSetup] runs this once per IDE run and raises a
- * notification listing whatever no longer matches, so an AWB update that renames/relocates a reflected member
- * surfaces loudly instead of as "mysteriously nothing happens".
+ * One-shot self-check of the `@Internal` air.* APIs the Docent stands on (T2 in docs/ASSESSMENT.md).
+ * [DocentWorkbenchSetup] runs this once per IDE run and raises a notification listing whatever no longer
+ * matches, so an AWB update that renames or relocates one of them surfaces loudly instead of as "mysteriously
+ * nothing happens" — which is exactly how the 20260723 layering announced itself.
  *
- * Reflects the air.* API across both generations we support (262.8665..263.1174 and the 263.1445+
- * provider→agent rework):
- *  - The vfile / editor types live under `com.intellij.air.thread.view.*` ([AwbNames]).
- *  - `AgentThreadViewFileEditor` has **no `tab` field** (content/surface abstraction), so we do NOT probe for
- *    `tab`; probing it would false-alarm.
- *  - The vfile provider getter is `getProvider()` (boxed `AgentThreadProvider?`) on 262 and the mangled
- *    `getAgentId-…(): String` on 263.1445+ (`getProviderContentConfig` deliberately doesn't count).
- *  - `sendText`'s 3-arg signature is unchanged but lives on [AwbNames.TERMINAL_TAB_FQN]; the editor→tab
- *    traversal itself is UNVERIFIED (see [DocentEventNotifier]) — we can only confirm the target method exists.
- *  - `AgentThreadLaunchContributor.contribute` must be one of the two mangled signatures
- *    `DocentLaunchContributor` carries — a third rename would otherwise resurface as an [AbstractMethodError]
- *    that breaks every AWB launch (the 0.5.2-on-263.1445 failure mode), so it gets the loudest check here.
+ * Everything is probed **by FQN through reflection**, deliberately: the seams themselves reference most of these
+ * types statically, and a static reference can only fail as a class-load error at the moment it's touched. These
+ * probes name the same FQNs (see [AwbNames] and the imports in each seam) and report them as a list.
+ *
+ * What is checked, and why:
+ *  - `AgentThreadLaunchContributor` + its mangled `contribute-…` name: [DocentLaunchContributor] implements this
+ *    interface, so a rename means the EP implementation can't load and **agents launch without the Docent
+ *    protocol**; a signature change alone means [AbstractMethodError] on every launch. Loudest check here.
+ *  - The prompt-launch client: the fallback push channel for a thread whose terminal isn't open.
+ *  - The thread-view vfile + editor and the terminal tab: the "type into the live terminal" channel and the
+ *    reachability flag in the "Connect agent…" picker ([AwbTerminalTab]).
  */
 internal object DocentSeamCheck {
 
@@ -25,58 +24,69 @@ internal object DocentSeamCheck {
     fun failures(): List<String> = buildList {
         val cl = DocentSeamCheck::class.java.classLoader
 
-        // The launch-contributor EP interface: its single abstract method's mangled name must be one of the
-        // two generations DocentLaunchContributor implements, else agents launch WITHOUT the Docent protocol
-        // (or worse, the whole launch pipeline fails on our stale registration).
-        val contributor = AwbReflect.load(cl, "com.intellij.air.threads.launch.AgentThreadLaunchContributor")
+        val contributor = AwbReflect.load(cl, LAUNCH_CONTRIBUTOR_FQN)
         if (contributor == null) {
-            add("AgentThreadLaunchContributor is gone (launch injection: agents won't know about the Docent)")
+            add("AgentThreadLaunchContributor moved or is gone (launch injection: agents won't know about the Docent)")
         } else {
-            val known = setOf("contribute-QyV-CsE", "contribute-WeWHIlw")
             val abstracts = contributor.methods.filter { java.lang.reflect.Modifier.isAbstract(it.modifiers) }
-            if (abstracts.none { it.name in known }) {
+            if (abstracts.none { it.name == CONTRIBUTE_METHOD }) {
                 add(
-                    "AgentThreadLaunchContributor.contribute changed signature again " +
-                        "(found ${abstracts.map { it.name }}; launch injection is broken and launches may fail)",
+                    "AgentThreadLaunchContributor.contribute changed signature " +
+                        "(found ${abstracts.map { it.name }}, expected $CONTRIBUTE_METHOD; launch injection is " +
+                        "broken and launches may fail)",
                 )
             }
+        }
+
+        if (AwbReflect.load(cl, PROMPT_LAUNCH_CLIENT_FQN) == null) {
+            add("AgentPromptBackendLaunchClient is gone (can't push events to an idle thread, or start new sessions)")
         }
 
         val vfile = AwbReflect.load(cl, AwbNames.CHAT_VFILE_FQN)
         if (vfile == null) {
             add("AgentThreadViewVirtualFile is gone (thread listing and event push)")
         } else {
-            if (AwbReflect.zeroArg(vfile, "getThreadId") == null && AwbReflect.zeroArg(vfile, "getSessionId") == null) {
-                add("AgentThreadViewVirtualFile has neither getThreadId() nor getSessionId() (can't identify open thread tabs)")
+            if (AwbReflect.zeroArg(vfile, "getThreadId") == null) {
+                add("AgentThreadViewVirtualFile.getThreadId() is gone (can't identify open thread tabs)")
             }
             if (AwbReflect.zeroArg(vfile, "getProjectPath") == null) {
                 add("AgentThreadViewVirtualFile.getProjectPath() is gone (can't scope thread tabs to the project)")
             }
-            // 262: plain getProvider() (boxed AgentThreadProvider?); 263.1445+: mangled getAgentId-…(): String.
-            // Must mirror WorkbenchSessionDirectory.readProviderValue — NOT a bare "getProvider" prefix, which
-            // would false-pass on the 263 vfile's unrelated getProviderContentConfig().
-            val providerGetters = vfile.methods.filter {
-                it.parameterCount == 0 &&
-                    (it.name == "getProvider" || it.name.startsWith("getProvider-") || it.name.startsWith("getAgentId"))
-            }
-            if (providerGetters.isEmpty()) {
-                add("AgentThreadViewVirtualFile has no provider/agentId accessor (can't tell Claude from Codex tabs)")
+            // The agent-id getter is value-class-mangled (getAgentId-KdGbIeA today), so match by prefix + shape.
+            // NB the vfile also has an unrelated getProviderContentConfig(), which a "getProvider*" match would
+            // wrongly accept — hence agentId only.
+            val agentIdGetters = vfile.methods.filter { it.parameterCount == 0 && it.name.startsWith("getAgentId") }
+            if (agentIdGetters.isEmpty()) {
+                add("AgentThreadViewVirtualFile has no agentId accessor (can't tell Claude from Codex tabs)")
             }
         }
 
-        // The editor type must still load; its `tab` field is INTENTIONALLY gone on 263 (content abstraction),
-        // so we don't check for it. The live-terminal delivery path degrades to the launcher push if the
-        // (UNVERIFIED) editor→tab traversal fails at runtime.
-        if (AwbReflect.load(cl, AwbNames.CHAT_FILE_EDITOR_FQN) == null) {
+        // The editor + the private content fields [AwbTerminalTab] walks to reach the live terminal.
+        val editor = AwbReflect.load(cl, AwbNames.CHAT_FILE_EDITOR_FQN)
+        if (editor == null) {
             add("AgentThreadViewFileEditor is gone (terminal event delivery)")
+        } else if (AwbNames.EDITOR_CONTENT_FIELDS.none { name -> editor.declaredFields.any { it.name == name } }) {
+            add(
+                "AgentThreadViewFileEditor has none of ${AwbNames.EDITOR_CONTENT_FIELDS} " +
+                    "(can't reach the live terminal; events fall back to the launch client)",
+            )
         }
 
-        // The sendText carrier — signature confirmed on 263, but the class must still exist and expose it.
+        // The sendText carrier itself.
         val termTab = AwbReflect.load(cl, AwbNames.TERMINAL_TAB_FQN)
         if (termTab == null) {
-            add("AgentThreadViewTerminalTab is gone (can't type events into the live thread terminal)")
+            add("AgentThreadViewTerminalTab moved or is gone (can't type events into the live thread terminal)")
         } else if (termTab.methods.none { it.name == "sendText" && it.parameterCount == 3 }) {
             add("AgentThreadViewTerminalTab lost sendText(text, execute, bracketedPaste) (can't type events into the session)")
         }
     }
+
+    /** The launch EP interface [DocentLaunchContributor] implements. */
+    private const val LAUNCH_CONTRIBUTOR_FQN = "com.intellij.air.backend.session.launch.AgentThreadLaunchContributor"
+
+    /** Its single abstract method's JVM name — mangled by the `agentId: AgentId` value-class parameter. */
+    private const val CONTRIBUTE_METHOD = "contribute-WeWHIlw"
+
+    /** The frontend prompt-launch entry point used by both the push fallback and "start a new session". */
+    private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.prompt.ui.AgentPromptBackendLaunchClient"
 }

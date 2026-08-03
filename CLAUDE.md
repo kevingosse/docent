@@ -50,20 +50,20 @@ what's left to build.
   embedded editors), **not** JCEF.
 - `instrumentCode` and `buildSearchableOptions` are disabled (Kotlin-only, no custom Settings) — see
   the comments in `build.gradle.kts`.
-- **Single universal artifact** since 0.5.2: 2026.3 renamed the entire AWB API (every type moved to
-  `com.intellij.air.*`, `Session`→`Thread`), and that rework then landed mid-262-line too — Rider EAP9
-  (build 262.8665) carries the same `air.*` API. So the old `awb262`/`awb263` split collapsed into one
-  `src/awb` seam compiled against the `air.*` API, shipped as one zip with `since-build 262.8665`,
-  `until-build 263.*` — it loads on 2026.2 EAP9+ *and* all of 2026.3. (There's also no CI-buildable
-  native 263: no AWB 263 exists on any public channel, so a single air.* binary was the only way to
-  cover 263 anyway.) Shared AWB-free code stays in `src/main`.
-- **The air.* API diverged again at AWB 263.1445** (0.6.0): `AgentThreadTerminalLaunchSpec`→
-  `AgentThreadLaunchSpec`, `AgentThreadProvider`→`AgentId`, provider registry→`AgentRegistry`. The one
-  artifact still covers both generations: `DocentLaunchContributor` carries a hand-mangled second
-  `contribute` (backtick-named, descriptor via the compile-only `src/awbStub` stub, reflective body),
-  and the other seams read the provider getters reflectively by mangle-prefix. Full story:
-  `docs/AWB-2026.3-COMPAT.md`; the member-exact API map (`AWB-263-API-MAP.md`) is kept **outside the
-  repo** (local-only, next to the compile-classpath dir).
+- **Single artifact** since 0.5.2: one `src/awb` seam compiled against the `air.*` API (the rename that
+  moved every AWB type to `com.intellij.air.*`, `Session`→`Thread`, landed mid-262-line, so the old
+  `awb262`/`awb263` split collapsed). Shipped as one zip, `since-build 262.8665` / `until-build 263.*`;
+  shared AWB-free code stays in `src/main`. The core review surface is platform-clean and loads across
+  that whole range — the AWB seam itself tracks one workbench generation (next bullet).
+- **The seam tracks ONE Agent Workbench generation** — as of 0.7.0, the layered API of AWB
+  **262.8665.20260723** (what Rider 2026.2.0.1 ships): `air.backend.*` / `air.frontend.*` /
+  `air.shared.*`, `AgentId`, `AgentThreadLaunchSpec`. Generation-spanning ended there: that build *moved
+  the launch EP interface*, and a JVM class can't implement a superinterface that doesn't exist, so the
+  0.6.x dual-mangled `contribute` + `src/awbStub` machinery is gone. AWB is `@Internal` and pins itself to
+  one IDE build, so **whenever the workbench updates, javap the installed `air-plugin/lib/**.jar` and
+  re-verify the seam**; `DocentSeamCheck` reports at runtime what a newer build broke. Full history +
+  the per-generation FQN maps: `docs/AWB-2026.3-COMPAT.md` (the member-exact `AWB-263-API-MAP.md` is
+  local-only, kept outside the repo).
 - Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-<version>.zip`.
   Dev run: `./gradlew runRider` (launches local Rider with the plugin, no SDK download) then
   **Tools → Open Docent Review**. `./gradlew runIde` uses the IC sandbox but lacks C#/C++ nav.
