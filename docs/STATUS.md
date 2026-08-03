@@ -25,9 +25,19 @@ built* lives in the code and its comments, not here.
 > two generations, so 0.7.0 is a **clean retarget** to that layout: dual-mangle + `src/awbStub` deleted,
 > pushes on the public `AgentPromptBackendApi`, the launch-profile picker **re-ported** (custom profiles
 > work again, no longer degraded), the editor→terminal walk now verified against the real classes and
-> extracted to `AwbTerminalTab`. Details: `docs/AWB-2026.3-COMPAT.md` (2026-08-03 update). Trade-off:
-> the seam matches AWB 20260723+ only; on older air.* workbenches the core loads and the seam reports
-> itself broken. **Built and javap-verified; not yet click-tested in a live review.**
+> extracted to `AwbTerminalTab`. Details: `docs/AWB-2026.3-COMPAT.md` (2026-08-03 update).
+
+> **2026-08-03, 0.7.1:** 0.7.0 had been aimed at the AWB build that happened to be installed — a
+> *date-stamped nightly* (`262.8665.20260723`), which is built against that day's platform and dies on a
+> released Rider: after the `262.8665.328 → .385` (2026.2 → 2026.2.0.1) update, every agent thread tab
+> failed with `NoClassDefFoundError: …TransferableTerminalSessionFactory` (deleted from the platform's
+> terminal frontend). The **release-line** build `262.8665.28` vendors what it needs and also drops the
+> `intellij.platform.ide.impl.wsl` dependency that was excluding all the backend ACP modules, so the seam
+> is retargeted there and `agentWorkbenchVersion` now pins a release-line build on principle. Delta
+> absorbed: prompt-request/profile shape, the catalog+availability pipeline behind the launch-profile
+> picker, and one extra hop in the editor→terminal chain (`AwbTerminalTab` now does a bounded field walk
+> instead of hard-coding a shape). Details: `docs/AWB-2026.3-COMPAT.md` (0.7.1 section).
+> **Built and javap-verified; not yet click-tested in a live review.**
 
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries

@@ -55,15 +55,16 @@ what's left to build.
   `awb262`/`awb263` split collapsed). Shipped as one zip, `since-build 262.8665` / `until-build 263.*`;
   shared AWB-free code stays in `src/main`. The core review surface is platform-clean and loads across
   that whole range — the AWB seam itself tracks one workbench generation (next bullet).
-- **The seam tracks ONE Agent Workbench generation** — as of 0.7.0, the layered API of AWB
-  **262.8665.20260723** (what Rider 2026.2.0.1 ships): `air.backend.*` / `air.frontend.*` /
-  `air.shared.*`, `AgentId`, `AgentThreadLaunchSpec`. Generation-spanning ended there: that build *moved
-  the launch EP interface*, and a JVM class can't implement a superinterface that doesn't exist, so the
-  0.6.x dual-mangled `contribute` + `src/awbStub` machinery is gone. AWB is `@Internal` and pins itself to
-  one IDE build, so **whenever the workbench updates, javap the installed `air-plugin/lib/**.jar` and
-  re-verify the seam**; `DocentSeamCheck` reports at runtime what a newer build broke. Full history +
-  the per-generation FQN maps: `docs/AWB-2026.3-COMPAT.md` (the member-exact `AWB-263-API-MAP.md` is
-  local-only, kept outside the repo).
+- **The seam tracks ONE Agent Workbench generation** — as of 0.7.1, AWB **262.8665.28**, the *release-line*
+  build paired with Rider 2026.2.0.1: layered `air.backend.*` / `air.frontend.*` / `air.shared.*`, `AgentId`,
+  `AgentThreadLaunchSpec`. Generation-spanning ended in 0.7.0: the layering *moved the launch EP interface*,
+  and a JVM class can't implement a superinterface that doesn't exist, so the 0.6.x dual-mangled `contribute`
+  + `src/awbStub` machinery is gone. Two rules follow from AWB being `@Internal` and pinned to one IDE build:
+  **pin `agentWorkbenchVersion` to a release-line build** (`262.8665.28`), never a date-stamped nightly
+  (those are built against that day's platform and break on a released Rider), and **whenever the workbench
+  or the IDE updates, javap the installed `air-plugin/lib/**.jar` and re-verify the seam** —
+  `DocentSeamCheck` reports at runtime what a newer build broke. Full history + the per-generation FQN maps:
+  `docs/AWB-2026.3-COMPAT.md` (the member-exact `AWB-263-API-MAP.md` is local-only, kept outside the repo).
 - Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-<version>.zip`.
   Dev run: `./gradlew runRider` (launches local Rider with the plugin, no SDK download) then
   **Tools → Open Docent Review**. `./gradlew runIde` uses the IC sandbox but lacks C#/C++ nav.

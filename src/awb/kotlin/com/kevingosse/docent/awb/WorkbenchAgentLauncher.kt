@@ -1,12 +1,14 @@
 package com.kevingosse.docent.awb
 
+import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
 import com.intellij.air.frontend.core.agentCatalogLaunchTargetsSnapshot
 import com.intellij.air.frontend.core.agentCatalogSnapshot
+import com.intellij.air.frontend.core.launchAvailabilityModelOrNull
 import com.intellij.air.frontend.launch.AgentThreadLaunchProfileStateService
-import com.intellij.air.frontend.launch.buildBuiltInLaunchProfiles
 import com.intellij.air.frontend.launch.resolveAgentThreadLaunchProfileItems
-import com.intellij.air.prompt.ui.buildEnabledAgentCatalogMenuModel
+import com.intellij.air.frontend.prompt.ui.buildEnabledAgentCatalogMenuModel
 import com.intellij.air.shared.prompt.AgentPromptBackendApi
+import com.intellij.air.shared.session.buildBuiltInLaunchProfiles
 import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
 import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
 import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
@@ -58,31 +60,43 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
 
     /** The AWB launch-profile menu (built-ins + user profiles), filtered to the agents the Docent can drive. */
     private fun profileOptions(): List<SessionLaunchOption> {
-        val agents = agentCatalogSnapshot().agents.filter { it.agentId.value in SUPPORTED_PROVIDER_VALUES }
-        if (agents.isEmpty()) return emptyList()
-        val menuModel = buildEnabledAgentCatalogMenuModel(project, agents)
+        // Narrow the catalog to Claude/Codex first, so every model built from it is already scoped to us.
+        val catalog = agentCatalogSnapshot().let { snapshot ->
+            snapshot.copy(agents = snapshot.agents.filter { it.agentId.value in SUPPORTED_PROVIDER_VALUES })
+        }
+        if (catalog.agents.isEmpty()) return emptyList()
+        // buildEnabledAgentCatalogMenuModel applies the user's per-agent enable setting; the availability model
+        // carries CLI reachability (which routes actually work) and is what decides launchability below.
+        val menuModel = buildEnabledAgentCatalogMenuModel(project, catalog)
+        val availability = project.service<AgentLaunchAvailabilityClient>().state.value
+            // The enable-setting is already applied by the menu model above, so this only has to answer
+            // "is the agent switched on at all" — routes/CLI reachability come from the state itself.
+            .launchAvailabilityModelOrNull(isAgentEnabled = { true })
+            ?: return emptyList()
         val state = service<AgentThreadLaunchProfileStateService>()
-        val userProfiles = state.getUserLaunchProfiles().filter { it.effectiveAgentId in SUPPORTED_PROVIDER_VALUES }
+        val userProfiles = state.getUserLaunchProfiles().filter { it.agentId in SUPPORTED_PROVIDER_VALUES }
         val builtInProfiles = buildBuiltInLaunchProfiles(
             menuModel = menuModel,
+            availabilityModel = availability,
             resolveName = { quickStartLabel(it) },
             catalogLaunchTargets = agentCatalogLaunchTargetsSnapshot(),
         )
         return resolveAgentThreadLaunchProfileItems(
             menuModel = menuModel,
+            availabilityModel = availability,
             userProfiles = userProfiles,
             builtInProfiles = builtInProfiles,
-            agentDescriptors = agents,
-            hiddenBuiltInProfileIds = state.getHiddenBuiltInLaunchProfileIds(),
+            deletedBuiltInProfileIds = state.getDeletedBuiltInLaunchProfileIds(),
             profileOrder = state.getLaunchProfileOrder(),
         )
-            .filter { it.isEnabled } // the workbench grays these out (CLI missing); we just skip them
+            // The workbench grays un-launchable profiles out (CLI missing, route unavailable); we just skip them.
+            .filter { availability.isProfileLaunchable(it.profile) }
             .map { item ->
                 profilesById[item.profile.id] = item.profile
                 SessionLaunchOption(
                     id = item.profile.id,
                     label = launchProfileActionText(item),
-                    provider = item.profile.effectiveAgentId,
+                    provider = item.profile.agentId,
                     icon = item.icon,
                 )
             }
@@ -101,7 +115,7 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                     AgentPromptLaunchRequest(
                         launchProfile = launchProfile,
                         projectPath = base,
-                        initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt, projectPath = base),
+                        initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
                         targetThreadId = null, // null → start a NEW thread rather than prompt an existing one
                     ),
                 )

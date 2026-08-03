@@ -63,7 +63,7 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
                 AgentPromptLaunchRequest(
                     launchProfile = minimalProfile(providerIdOf(service.agentProvider)),
                     projectPath = projectPath,
-                    initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt, projectPath = projectPath),
+                    initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt),
                     targetThreadId = threadId,
                 ),
             )

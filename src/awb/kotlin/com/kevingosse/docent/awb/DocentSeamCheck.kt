@@ -39,7 +39,7 @@ internal object DocentSeamCheck {
         }
 
         if (AwbReflect.load(cl, PROMPT_LAUNCH_CLIENT_FQN) == null) {
-            add("AgentPromptBackendLaunchClient is gone (can't push events to an idle thread, or start new sessions)")
+            add("AgentPromptBackendApi is gone (can't push events to an idle thread, or start new sessions)")
         }
 
         val vfile = AwbReflect.load(cl, AwbNames.CHAT_VFILE_FQN)
@@ -87,6 +87,6 @@ internal object DocentSeamCheck {
     /** Its single abstract method's JVM name — mangled by the `agentId: AgentId` value-class parameter. */
     private const val CONTRIBUTE_METHOD = "contribute-WeWHIlw"
 
-    /** The frontend prompt-launch entry point used by both the push fallback and "start a new session". */
-    private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.prompt.ui.AgentPromptBackendLaunchClient"
+    /** The prompt-launch RPC surface used by both the push fallback and "start a new session". */
+    private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.shared.prompt.AgentPromptBackendApi"
 }
