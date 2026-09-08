@@ -56,10 +56,8 @@ built* lives in the code and its comments, not here.
 > sessionToken. Also absorbed: `AgentThreadsStateStore` moved to `air.backend.session.runtime.state`,
 > `buildBuiltInLaunchProfiles` gained `preferTerminalSurface`, `launchProfileActionText` went
 > Kotlin-internal. `DocentSeamCheck` now probes the two ACP EPs too. Details:
-> `docs/AWB-2026.3-COMPAT.md` (0.8.0 section). **Built and javap-verified against Air 263.4739.0; not
-> yet click-tested in a live review** — first thing to verify: a Chat (ACP) Claude thread lists the
-> `docent` MCP server and records decisions unprompted; second: whether Monitor is available to the
-> SDK-driven Claude (else Claude on ACP needs the AWAIT tail).
+> `docs/AWB-2026.3-COMPAT.md` (0.8.0 section). **User-verified live on IDEA 2026.3 / Air 263.4739.0**
+> (2026-09-08): the ACP Claude thread gets the `docent` MCP server and the protocol.
 
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
