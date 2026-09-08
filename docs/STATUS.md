@@ -39,6 +39,28 @@ built* lives in the code and its comments, not here.
 > instead of hard-coding a shape). Details: `docs/AWB-2026.3-COMPAT.md` (0.7.1 section).
 > **Built and javap-verified; not yet click-tested in a live review.**
 
+> **2026-09-08, 0.8.0:** the plugin went dead on IntelliJ IDEA 2026.3 (263.4739) with its **bundled Air**
+> (the Agent Workbench's new name). Two independent breaks, diagnosed from the Ultimate source:
+> (1) Air's plugin id became `com.intellij.air` (2026-07-28, no alias), so the optional `docent-awb.xml`
+> gated on `com.intellij.agent.workbench` never loaded — no seam, no seam-check balloon, silence;
+> (2) Claude and Codex are now **"folded" ACP agents**: the default Chat surface launches them through the
+> `claude-acp`/`codex-acp` adapters with an EMPTY terminal command, so `--append-system-prompt` /
+> `--mcp-config` injection has nothing to attach to (the launch EP still fires, on nothing). Fix: the seam
+> now depends on `com.intellij.air`, builds against the local IDEA 2026.3's bundled Air
+> (`ideLocalPath` + `bundledPlugin("com.intellij.air")`), and serves **both Air surfaces**:
+> Terminal (CLI in a tab) keeps the launch-contributor CLI injection, now skipped when the command is
+> empty; ACP gets the `docent` MCP entry via Air's `acp.mcpServerProvider` EP (an HTTP `McpServer` in
+> `session/new`, the same way Air adds `jetbrains_air_ide`) and the protocol via the `acpPromptSupplement`
+> EP (full protocol appended wire-only to a thread's first turn, a one-line reminder afterwards — there is
+> no per-session system-prompt hook on the ACP path). Both surfaces bake the Air thread id in as the
+> sessionToken. Also absorbed: `AgentThreadsStateStore` moved to `air.backend.session.runtime.state`,
+> `buildBuiltInLaunchProfiles` gained `preferTerminalSurface`, `launchProfileActionText` went
+> Kotlin-internal. `DocentSeamCheck` now probes the two ACP EPs too. Details:
+> `docs/AWB-2026.3-COMPAT.md` (0.8.0 section). **Built and javap-verified against Air 263.4739.0; not
+> yet click-tested in a live review** — first thing to verify: a Chat (ACP) Claude thread lists the
+> `docent` MCP server and records decisions unprompted; second: whether Monitor is available to the
+> SDK-driven Claude (else Claude on ACP needs the AWAIT tail).
+
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
 > `mcp_servers.*` overrides its app-server doesn't have — and the workbench spawns that app-server

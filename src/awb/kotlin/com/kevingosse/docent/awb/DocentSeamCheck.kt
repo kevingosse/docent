@@ -42,6 +42,30 @@ internal object DocentSeamCheck {
             add("AgentPromptBackendApi is gone (can't push events to an idle thread, or start new sessions)")
         }
 
+        // The ACP-surface seams (the default Chat route for Claude/Codex since Air 263.x). Their EP interfaces are
+        // implemented statically by DocentAcpMcpServerProvider / DocentAcpPromptSupplement, so a rename means the
+        // EP implementation can't load and ACP threads get neither the docent MCP entry nor the protocol.
+        val mcpProvider = AwbReflect.load(cl, ACP_MCP_PROVIDER_FQN)
+        if (mcpProvider == null) {
+            add("AcpMcpServerProvider moved or is gone (ACP threads won't get the docent MCP tools)")
+        } else if (mcpProvider.methods.none { java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_MCP_PROVIDER_METHOD }) {
+            add(
+                "AcpMcpServerProvider.getMcpServers changed signature (found " +
+                    "${mcpProvider.methods.filter { java.lang.reflect.Modifier.isAbstract(it.modifiers) }.map { it.name }}; " +
+                    "ACP threads won't get the docent MCP tools)",
+            )
+        }
+        val supplement = AwbReflect.load(cl, ACP_PROMPT_SUPPLEMENT_FQN)
+        if (supplement == null) {
+            add("AcpPromptSupplement moved or is gone (ACP threads won't receive the Docent protocol)")
+        } else if (supplement.methods.none { java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_PROMPT_SUPPLEMENT_METHOD }) {
+            add("AcpPromptSupplement.supplement changed signature (ACP threads won't receive the Docent protocol)")
+        }
+
+        if (AwbReflect.load(cl, THREADS_STATE_STORE_FQN) == null) {
+            add("AgentThreadsStateStore moved or is gone (persisted thread listing and ACP agent lookup)")
+        }
+
         val vfile = AwbReflect.load(cl, AwbNames.CHAT_VFILE_FQN)
         if (vfile == null) {
             add("AgentThreadViewVirtualFile is gone (thread listing and event push)")
@@ -89,4 +113,14 @@ internal object DocentSeamCheck {
 
     /** The prompt-launch RPC surface used by both the push fallback and "start a new session". */
     private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.shared.prompt.AgentPromptBackendApi"
+
+    /** The ACP EP interfaces [DocentAcpMcpServerProvider] / [DocentAcpPromptSupplement] implement (not value-class
+     *  mangled: `SessionRef` / `AcpAgentId` are ordinary types). */
+    private const val ACP_MCP_PROVIDER_FQN = "com.intellij.air.acp.AcpMcpServerProvider"
+    private const val ACP_MCP_PROVIDER_METHOD = "getMcpServers"
+    private const val ACP_PROMPT_SUPPLEMENT_FQN = "com.intellij.air.acp.runtime.AcpPromptSupplement"
+    private const val ACP_PROMPT_SUPPLEMENT_METHOD = "supplement"
+
+    /** Air's persisted thread store (moved from `air.threads.state` in 263.x). */
+    private const val THREADS_STATE_STORE_FQN = "com.intellij.air.backend.session.runtime.state.AgentThreadsStateStore"
 }

@@ -16,10 +16,12 @@
     <!-- Optional: when the in-IDE MCP server is present, publish the Docent handoff tools so a
          workbench-launched coding agent can call them. The core plugin loads fine without it. -->
     <depends optional="true" config-file="docent-mcp.xml">com.intellij.mcpServer</depends>
-    <!-- Optional: when the Agent Workbench is installed, install the Docent's workbench seams (session
-         directory for "Connect agent…", and the push notifier) and inject the Docent protocol at launch.
-         The agent reaches the IDE MCP tools via the user's .mcp.json (stdio); we don't force direct-HTTP. -->
-    <depends optional="true" config-file="docent-awb.xml">com.intellij.agent.workbench</depends>
+    <!-- Optional: when Air (formerly the Agent Workbench) is installed, install the Docent's workbench seams
+         (session directory for "Connect agent…", the push notifier) and inject the Docent protocol + MCP entry
+         into every agent it launches — on the Terminal surface via CLI args, on the ACP surface via Air's ACP
+         EPs. Air's plugin id became `com.intellij.air` on 2026-07-28 (263.x, bundled in the IDE); the old
+         `com.intellij.agent.workbench` id has no alias, so this MUST name the new id or the seam never loads. -->
+    <depends optional="true" config-file="docent-awb.xml">com.intellij.air</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- Balloon notifications (e.g. the workbench seam self-check warning when an AWB update breaks

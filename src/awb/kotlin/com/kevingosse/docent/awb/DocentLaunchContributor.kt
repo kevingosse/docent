@@ -7,9 +7,15 @@ import com.intellij.air.shared.core.thread.AgentThreadLaunchSpec
 import com.intellij.openapi.diagnostic.logger
 
 /**
- * Injects the [DocentProtocolPrompt] into an AWB-launched agent's
+ * Injects the [DocentProtocolPrompt] into an Air-launched agent's
  * system/base instructions at launch, so the agent knows the Code Review Docent exists and when to use its
  * `docent_*` tools **without the human prompting it**.
+ *
+ * **Terminal surface only.** This EP fires for every launch, but its `command` is the *terminal* command line: on
+ * the ACP surface (the default Chat route for Claude/Codex since Air 263.x) the spec's command is empty and the
+ * agent is started by the ACP adapter — see [DocentAcpMcpServerProvider] + [DocentAcpPromptSupplement] for that
+ * path. Both surfaces end up with the same contract: the `docent` MCP entry and the protocol carrying the Air
+ * thread id as the sessionToken.
  *
  * Registered on the air.* EP `com.intellij.air.threadLaunchContributor` (in the optional, gated
  * `docent-awb.xml`), mirroring the bundled `AirMcpConfigLaunchContributor`. This is the thin EP-interface
@@ -34,6 +40,18 @@ internal class DocentLaunchContributor : AgentThreadLaunchContributor {
         threadId: String?,
         launchSpec: AgentThreadLaunchSpec,
     ): AgentThreadLaunchSpec {
+        // ACP surface (Air 263.x "folded" Claude/Codex): the structured launch spec has NO terminal command — the
+        // agent starts through the ACP adapter, and the MCP entry + protocol are delivered by
+        // DocentAcpMcpServerProvider / DocentAcpPromptSupplement instead. Appending CLI args here would turn an
+        // empty command into a bogus one, so only (re)register the push target and pass the spec through.
+        if (launchSpec.command.isEmpty()) {
+            if (agentId.value == AwbNames.PROVIDER_CLAUDE || agentId.value == AwbNames.PROVIDER_CODEX) {
+                runCatching { LaunchInjection.registerPushTarget(projectPath, agentId.value) }
+                    .onFailure { LOG.warn("Docent: couldn't register the push target for an ACP launch", it) }
+                LOG.info("Docent: ${agentId.value} ACP launch (thread=${threadId ?: launchSpec.preallocatedThreadId}) — no terminal command; the ACP seams deliver the protocol")
+            }
+            return launchSpec
+        }
         val injected = injectedCommand(projectPath, agentId.value, threadId, launchSpec.command, launchSpec.preallocatedThreadId)
             ?: return launchSpec
         return launchSpec.copy(command = injected)

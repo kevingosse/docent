@@ -1,7 +1,7 @@
 package com.kevingosse.docent.awb
 
 import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
-import com.intellij.air.frontend.core.agentCatalogLaunchTargetsSnapshot
+
 import com.intellij.air.frontend.core.agentCatalogSnapshot
 import com.intellij.air.frontend.core.launchAvailabilityModelOrNull
 import com.intellij.air.frontend.launch.AgentThreadLaunchProfileStateService
@@ -12,8 +12,8 @@ import com.intellij.air.shared.session.buildBuiltInLaunchProfiles
 import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
 import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
 import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
-import com.intellij.air.threads.launchProfileActionText
-import com.intellij.air.threads.quickStartLabel
+
+import com.intellij.air.frontend.launch.quickStartLabel
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.runBlockingCancellable
@@ -75,17 +75,20 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
             ?: return emptyList()
         val state = service<AgentThreadLaunchProfileStateService>()
         val userProfiles = state.getUserLaunchProfiles().filter { it.agentId in SUPPORTED_PROVIDER_VALUES }
+        // preferTerminalSurface=false: the built-in Chat route (ACP for Claude/Codex since Air 263.x), exactly what
+        // Air's own new-thread menu offers by default. The Docent works on both surfaces, so no need to steer.
         val builtInProfiles = buildBuiltInLaunchProfiles(
             menuModel = menuModel,
             availabilityModel = availability,
             resolveName = { quickStartLabel(it) },
-            catalogLaunchTargets = agentCatalogLaunchTargetsSnapshot(),
+            preferTerminalSurface = false,
+            catalogLaunchTargets = catalog.launchTargets,
         )
         return resolveAgentThreadLaunchProfileItems(
             menuModel = menuModel,
             availabilityModel = availability,
-            userProfiles = userProfiles,
             builtInProfiles = builtInProfiles,
+            userProfiles = userProfiles,
             deletedBuiltInProfileIds = state.getDeletedBuiltInLaunchProfileIds(),
             profileOrder = state.getLaunchProfileOrder(),
         )
@@ -95,7 +98,8 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                 profilesById[item.profile.id] = item.profile
                 SessionLaunchOption(
                     id = item.profile.id,
-                    label = launchProfileActionText(item),
+                    // Air's own action-text helper went Kotlin-internal in 263.x; the profile name is what it shows.
+                    label = item.profile.name,
                     provider = item.profile.agentId,
                     icon = item.icon,
                 )

@@ -6,25 +6,25 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
-// --- One artifact, one Agent Workbench generation (the "air.*" API) -----------------------------
-// The Agent Workbench API is `@Internal` and moves fast; the plugin id (`com.intellij.agent.workbench`) stays
-// the same across reworks, so a Marketplace update can silently swap the API under a running IDE. History:
+// --- One artifact, one Air generation (the "air.*" API) ----------------------------------------
+// The Air (formerly Agent Workbench) API is `@Internal` and moves fast. History:
 //   * 262.8377 and older: the pre-air `com.intellij.platform.ai.agent.*` / `agent.workbench.*` API.
-//   * 262.8665.20260706 (2026.2 EAP9): everything moved under `com.intellij.air.*`, Session→Thread. Verified
-//     byte-identical to the 2026.3 build (263.1174) for every type used here, so ONE binary covered both.
+//   * 262.8665.20260706 (2026.2 EAP9): everything moved under `com.intellij.air.*`, Session→Thread.
 //   * 263.1445: `AgentThreadTerminalLaunchSpec`→`AgentThreadLaunchSpec`, `AgentThreadProvider`→`AgentId`.
-//     Signatures only, same FQNs — 0.6.x spanned it with a hand-mangled second `contribute` + a compile-only
-//     stub source set.
-//   * 262.8665.20260723 (shipped to the 2026.2.0.1 release): the flat namespaces were split into
-//     `air.backend.*` / `air.frontend.*` / `air.shared.*` layers. The launch-EP INTERFACE moved with them, and
-//     a JVM class cannot implement a superinterface that doesn't exist, so spanning generations is over: as of
-//     0.7.0 the seam targets this layout only, and the dual-mangle machinery + awbStub are gone. Full map:
+//   * 262.8665.20260723 / 262.8665.28 (Rider 2026.2.0.1): flat namespaces split into `air.backend.*` /
+//     `air.frontend.*` / `air.shared.*`. The launch-EP INTERFACE moved with them, so spanning generations
+//     ended (0.7.0): one seam, one generation.
+//   * 263.4739 (IDEA 2026.3, Air BUNDLED in the IDE): plugin id renamed `com.intellij.agent.workbench` →
+//     `com.intellij.air` (no alias), and Claude/Codex became "folded" ACP agents — the default Chat surface
+//     launches them through the ACP adapter with an EMPTY terminal command, so CLI-arg injection only reaches
+//     the Terminal surface. The ACP surface is served through Air's ACP EPs (`acp.mcpServerProvider`,
+//     `acpPromptSupplement`) instead. As of 0.8.0 the seam targets THIS generation. Full map:
 //     docs/AWB-2026.3-COMPAT.md.
-// So: re-verify the seam (javap the installed AWB jars) whenever the workbench updates, and let
+// So: re-verify the seam (javap the installed air-plugin jars) whenever Air or the IDE updates, and let
 // DocentSeamCheck report at runtime what a newer build broke.
 //
-// Source layout: AWB-free code stays in src/main; the AWB-touching code (the air.* seam) lives in src/awb.
-val awbBuild = "262.8665" // floor: first build carrying the air.* API (2026.2 EAP9)
+// Source layout: Air-free code stays in src/main; the Air-touching code (the air.* seam) lives in src/awb.
+val awbBuild = "262.8665" // since-build floor: first build carrying the air.* API (2026.2 EAP9)
 
 group = providers.gradleProperty("pluginGroup").get()
 version = providers.gradleProperty("pluginVersion").get()
@@ -36,38 +36,36 @@ repositories {
     }
 }
 
-// Platform base + Agent Workbench resolution has two modes:
+// Platform base + Air resolution has two modes:
 //
-//   * Local (developer default): build against the locally-installed Rider and the installed
-//     Agent Workbench plugin. Zero-download, matches the runtime exactly, and gives us
-//     `com.intellij.mcpServer` (bundled only since 2025+). Enabled by setting the `riderLocalPath`
-//     Gradle property (e.g. in ~/.gradle/gradle.properties or -PriderLocalPath=...) / RIDER_HOME and
-//     the `agentWorkbenchPluginPath` property / AGENT_WORKBENCH_PLUGIN env var. NB: both must now point
-//     at an air.* build (Rider EAP9+ / the `air-plugin` install), not the old 262.8377 `agent-workbench-plugin`.
+//   * Local (developer default): build against a locally-installed 2026.3 IDE that BUNDLES Air (IntelliJ
+//     IDEA 263.4739+; Rider 263 does not bundle it yet) and compile the seam against that bundled Air.
+//     Zero-download, matches the runtime exactly, and gives us `com.intellij.mcpServer`. Enabled by the
+//     `ideLocalPath` Gradle property (e.g. in ~/.gradle/gradle.properties or -PideLocalPath=...) / IDE_HOME.
+//     `riderLocalPath` / RIDER_HOME is accepted as a fallback base (and still drives `runRider`).
+//     To compile against a non-bundled Air install instead, point `airPluginPath` / AIR_PLUGIN at its
+//     directory (the `air-plugin` folder); otherwise the IDE's bundled `com.intellij.air` is used.
 //
-//   * Download (CI, no local IDE): when those paths are unset we download the Rider build named by
-//     the `riderVersion` property and resolve the Agent Workbench plugin from the JetBrains
-//     Marketplace at `agentWorkbenchVersion`. NB: the workbench's since/until-build pins it to a
-//     single Rider build, so `riderVersion` and `agentWorkbenchVersion` are tightly coupled — bump
-//     them together (see gradle.properties). Both must be air.*-era builds (>= 262.8665).
+//   * Download (CI, no local IDE): when those paths are unset we download the IntelliJ IDEA Ultimate build
+//     named by the `ideaVersion` property (Air is bundled in it). NB: Air's since/until-build pins it to a
+//     single IDE build, so the seam is only guaranteed against the exact build in gradle.properties.
 fun propOrEnv(prop: String, env: String): String? =
     providers.gradleProperty(prop).orNull?.takeIf { it.isNotBlank() }
         ?: providers.environmentVariable(env).orNull?.takeIf { it.isNotBlank() }
 
 val riderLocalPath: String? = propOrEnv("riderLocalPath", "RIDER_HOME")
 
-val agentWorkbenchPluginPath: String? = propOrEnv("agentWorkbenchPluginPath", "AGENT_WORKBENCH_PLUGIN")
+/** The compile base: a 2026.3 IDE bundling Air (preferred), else the local Rider. */
+val ideLocalPath: String? = propOrEnv("ideLocalPath", "IDE_HOME") ?: riderLocalPath
+
+val airPluginPath: String? = propOrEnv("airPluginPath", "AIR_PLUGIN")
 
 dependencies {
     intellijPlatform {
-        if (riderLocalPath != null) {
-            local(riderLocalPath)
+        if (ideLocalPath != null) {
+            local(ideLocalPath)
         } else {
-            // useInstaller = false is REQUIRED for Rider: the IJP plugin can't consume Rider's
-            // installer distribution, so we pull the maven artifact (com.jetbrains.intellij.rider:
-            // riderRD) instead. 2026.2 is still EAP, so `riderVersion` is a `-SNAPSHOT` from the
-            // snapshots repo (already part of defaultRepositories()).
-            rider(providers.gradleProperty("riderVersion").get()) {
+            intellijIdeaUltimate(providers.gradleProperty("ideaVersion").get()) {
                 useInstaller = false
             }
         }
@@ -76,14 +74,13 @@ dependencies {
         // in the platform, so the mcp/ package is version-agnostic.
         bundledPlugin("com.intellij.mcpServer")
 
-        // Agent Workbench: optional compile-time dep for its launch / MCP-wiring EPs (the air.* API). Plugin
-        // id is `com.intellij.agent.workbench`. When building locally it's the installed `air-plugin`; in CI it
-        // comes from the Marketplace at `agentWorkbenchVersion`. Re-verify the EP shapes (javap the jars)
-        // whenever the base moves.
-        if (agentWorkbenchPluginPath != null) {
-            localPlugin(file(agentWorkbenchPluginPath))
+        // Air: optional compile-time dep for its launch / ACP EPs (the air.* API). Plugin id `com.intellij.air`,
+        // bundled in 2026.3 IDEs; `airPluginPath` overrides with a standalone install. Re-verify the EP shapes
+        // (javap the jars) whenever the base moves.
+        if (airPluginPath != null) {
+            localPlugin(file(airPluginPath))
         } else {
-            plugin("com.intellij.agent.workbench", providers.gradleProperty("agentWorkbenchVersion").get())
+            bundledPlugin("com.intellij.air")
         }
 
         pluginVerifier()
@@ -117,10 +114,10 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             // Floor = 262.8665 (2026.2 EAP9, first build with the air.* API); anything below has the old
-            // platform.ai.agent.* API and would fail at load, so it's deliberately excluded. Cap at 263.* is
-            // kept because the CORE review surface is platform-clean and works there — but note the AWB seam
-            // is compiled against the layered 20260723 API, so on an IDE carrying an older/newer workbench the
-            // seam degrades (loudly, via DocentSeamCheck) while the rest of the plugin keeps working.
+            // platform.ai.agent.* API and would fail at load, so it's deliberately excluded. The CORE review
+            // surface is platform-clean and works across the whole range. The Air seam is gated on the
+            // `com.intellij.air` plugin id (263.x bundled Air): on a 262 IDE (Air still `com.intellij.agent.workbench`)
+            // it simply doesn't load; on a 263 IDE with a different Air build it degrades loudly via DocentSeamCheck.
             sinceBuild = awbBuild
             untilBuild = "263.*"
         }

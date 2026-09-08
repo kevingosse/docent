@@ -10,10 +10,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# The plugin ships as ONE artifact built against the Agent Workbench air.* API (see build.gradle.kts
-# header for why one binary covers both 2026.2 EAP9+ and 2026.3). No local Rider / Agent Workbench on
-# the runner, so the build downloads the Rider build named by `riderVersion` and resolves the workbench
-# from the Marketplace at `agentWorkbenchVersion` (see build.gradle.kts / gradle.properties).
+# The plugin ships as ONE artifact built against the Air (ex Agent Workbench) air.* API of one IDE build
+# (see build.gradle.kts header). No local IDE on the runner, so the build downloads the IntelliJ IDEA
+# Ultimate build named by `ideaVersion` — Air is bundled in it (see build.gradle.kts / gradle.properties).
 jobs:
   build:
     runs-on: ubuntu-latest

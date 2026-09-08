@@ -1,7 +1,7 @@
 package com.kevingosse.docent.awb
 
 import com.intellij.air.thread.view.AgentThreadViewVirtualFile
-import com.intellij.air.threads.state.AgentThreadsStateStore
+import com.intellij.air.backend.session.runtime.state.AgentThreadsStateStore
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager

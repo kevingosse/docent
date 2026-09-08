@@ -40,34 +40,33 @@ what's left to build.
 ## Tech stack
 
 - IntelliJ Platform plugin; Kotlin 2.4.0; Gradle 9.1.0; IntelliJ Platform Gradle Plugin 2.16.0.
-- Base platform: **builds against the locally-installed Rider** (build 262 / 2026.2 EAP9+), `since-build 262.8665`,
-  Java 21 toolchain. (Bumped from IC 2024.3 once the MCP integration needed `com.intellij.mcpServer`,
-  which is bundled only in 2025+; building against the local Rider is zero-download and exact-match — see
-  `build.gradle.kts`. Kotlin had to move 2.1→2.4 to read Rider 262's platform metadata.)
+- Base platform: **builds against a locally-installed 2026.3 IDE that bundles Air** (IntelliJ IDEA 263.4739,
+  `ideLocalPath`), `since-build 262.8665` / `until-build 263.*`, Java 21 toolchain. Air (the Agent Workbench's new
+  name, plugin id `com.intellij.air` since 2026-07-28) is BUNDLED in 263 IDEs and pinned to the exact IDE build, so
+  the seam compiles against `bundledPlugin("com.intellij.air")`; `airPluginPath` overrides with a standalone
+  install, `riderLocalPath` is the `runRider` target / fallback base (Rider 263 doesn't bundle Air yet). See
+  `build.gradle.kts`.
 - Optional dependency on `com.intellij.mcpServer` (gated module `docent-mcp.xml`) for the MCP handoff;
   the core stays platform-clean (`com.intellij.modules.platform`) and loads without it.
 - Native UI (Swing / IntelliJ UI DSL); code shown via real editor components (`EditorTextField` /
   embedded editors), **not** JCEF.
 - `instrumentCode` and `buildSearchableOptions` are disabled (Kotlin-only, no custom Settings) — see
   the comments in `build.gradle.kts`.
-- **Single artifact** since 0.5.2: one `src/awb` seam compiled against the `air.*` API (the rename that
-  moved every AWB type to `com.intellij.air.*`, `Session`→`Thread`, landed mid-262-line, so the old
-  `awb262`/`awb263` split collapsed). Shipped as one zip, `since-build 262.8665` / `until-build 263.*`;
-  shared AWB-free code stays in `src/main`. The core review surface is platform-clean and loads across
-  that whole range — the AWB seam itself tracks one workbench generation (next bullet).
-- **The seam tracks ONE Agent Workbench generation** — as of 0.7.1, AWB **262.8665.28**, the *release-line*
-  build paired with Rider 2026.2.0.1: layered `air.backend.*` / `air.frontend.*` / `air.shared.*`, `AgentId`,
-  `AgentThreadLaunchSpec`. Generation-spanning ended in 0.7.0: the layering *moved the launch EP interface*,
-  and a JVM class can't implement a superinterface that doesn't exist, so the 0.6.x dual-mangled `contribute`
-  + `src/awbStub` machinery is gone. Two rules follow from AWB being `@Internal` and pinned to one IDE build:
-  **pin `agentWorkbenchVersion` to a release-line build** (`262.8665.28`), never a date-stamped nightly
-  (those are built against that day's platform and break on a released Rider), and **whenever the workbench
-  or the IDE updates, javap the installed `air-plugin/lib/**.jar` and re-verify the seam** —
-  `DocentSeamCheck` reports at runtime what a newer build broke. Full history + the per-generation FQN maps:
-  `docs/AWB-2026.3-COMPAT.md` (the member-exact `AWB-263-API-MAP.md` is local-only, kept outside the repo).
+- **Single artifact, one `src/awb` seam, one Air generation.** Shared Air-free code stays in `src/main`; the
+  seam (gated `docent-awb.xml` on plugin id `com.intellij.air`) tracks exactly one Air build — as of 0.8.0
+  **263.4739.0** (bundled in IDEA 2026.3). The core review surface is platform-clean and loads across the whole
+  since/until range; on a 262 IDE (Air still id `com.intellij.agent.workbench`) the seam simply doesn't load.
+- **Air has TWO session surfaces and the Docent must serve both.** Terminal (CLI in a terminal tab): the
+  `threadLaunchContributor` EP appends `--append-system-prompt` / `--mcp-config` (Claude) or `-c` overrides
+  (Codex) to the command line. ACP (the default Chat route for Claude/Codex since 263.x, "folded" agents): the
+  launch spec has an EMPTY command, so the `acp.mcpServerProvider` EP contributes the `docent` HTTP MCP server to
+  `session/new` and the `acpPromptSupplement` EP appends the protocol to the thread's first turn (reminder on later
+  turns). Both bake the Air thread id in as the sessionToken. Rules: **javap the installed `air-plugin/lib/**.jar`
+  and re-verify the seam whenever Air or the IDE updates** — `DocentSeamCheck` reports at runtime what a newer
+  build broke. History + per-generation FQN maps: `docs/AWB-2026.3-COMPAT.md`.
 - Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-<version>.zip`.
-  Dev run: `./gradlew runRider` (launches local Rider with the plugin, no SDK download) then
-  **Tools → Open Docent Review**. `./gradlew runIde` uses the IC sandbox but lacks C#/C++ nav.
+  Dev run: `./gradlew runIdea -PideaLocalPath=...` (the 2026.3 IDEA with bundled Air) or `./gradlew runRider`
+  (local Rider; no Air seam there until Rider bundles it), then **Tools → Open Docent Review**.
 
 ## Vocabulary
 

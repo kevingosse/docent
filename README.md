@@ -28,31 +28,33 @@ Nothing is hidden: every changed file appears in some section (an auto-synthesiz
 ## First run
 
 1. Open your project and open the **Code Review Docent** tool window (left sidebar).
-2. Launch an agent session from the **Agent Workbench** and give it a task. Docent injects everything it needs into the launch automatically — its protocol, and its own MCP endpoint (serving only the 8 `docent_*` tools; additive, your existing MCP configuration is untouched). The agent starts recording decisions with no prompting.
+2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works — and give it a task. Docent injects everything it needs into the launch automatically — its protocol, and its own MCP endpoint (serving only the 8 `docent_*` tools; additive, your existing MCP configuration is untouched). The agent starts recording decisions with no prompting.
 3. When the panel shows *"N decisions ready to review"*, click **Start reviewing**. The review opens as an editor tab; step through sections with the plan rail or **Alt+.** / **Alt+,**.
 
 ## Troubleshooting
 
-- **The panel never shows pending decisions** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from the Agent Workbench* (a plain-terminal agent doesn't get the Docent protocol); the agent's session is still open.
+- **The panel never shows pending decisions** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from Air* (a plain-terminal agent doesn't get the Docent protocol); the agent's session is still open.
 - **"Docent isn't responding" on a question** — the agent may be busy or its session closed; use the **Nudge** link on the notice, or reopen the session and click **Connect agent…**.
 - **A workbench update broke something** — Docent self-checks its workbench integration at startup and raises a notification listing exactly what broke; update the plugin.
 
 ## Building from source
 
-Requires a local Rider installation (2025.2+, build 252+) and the Agent Workbench plugin installed in it:
+Requires a local 2026.3 JetBrains IDE that bundles **Air** (IntelliJ IDEA build 263.4739+; Air is the Agent
+Workbench's new name):
 
 ```bash
-# ~/.gradle/gradle.properties (or environment variables RIDER_HOME / AGENT_WORKBENCH_PLUGIN)
-riderLocalPath=/path/to/rider
-agentWorkbenchPluginPath=/path/to/agent-workbench-plugin
+# ~/.gradle/gradle.properties (or environment variables IDE_HOME / RIDER_HOME / AIR_PLUGIN)
+ideLocalPath=/path/to/intellij-idea-2026.3
+# optional: riderLocalPath=/path/to/rider  (runRider target / fallback base)
+# optional: airPluginPath=/path/to/air-plugin  (compile against a standalone Air install instead of the bundled one)
 ```
 
 ```bash
 ./gradlew buildPlugin        # → build/distributions/code-review-docent-*.zip
-./gradlew runRider           # launch Rider with the plugin loaded
+./gradlew runIdea -PideaLocalPath=/path/to/intellij-idea-2026.3   # launch IDEA with the plugin loaded
 ```
 
-Without a local IDE configured, the build downloads the Rider EAP named by `riderVersion` in `gradle.properties` (this is what CI does).
+Without a local IDE configured, the build downloads the IntelliJ IDEA Ultimate build named by `ideaVersion` in `gradle.properties` (this is what CI does).
 
 ## Design
 

@@ -1,7 +1,11 @@
 <idea-plugin>
-    <!-- Loaded only when com.intellij.agent.workbench is present. Installs the Docent's workbench seams (thread
-         directory + push notifier) at project open so "Connect agent…" and the review push path are available
-         whenever AWB is present.
+    <!-- Loaded only when Air (plugin id com.intellij.air, formerly the Agent Workbench) is present. Installs the
+         Docent's workbench seams (thread directory + push notifier) at project open so "Connect agent…" and the
+         review push path are available whenever Air is present, and wires the Docent protocol + MCP entry into
+         every agent Air launches, on BOTH of its surfaces:
+           - Terminal surface (CLI in a terminal tab): threadLaunchContributor appends the CLI args.
+           - ACP surface (the default Chat route for Claude/Codex since Air 263.x): acp.mcpServerProvider adds the
+             docent MCP server to session/new, acpPromptSupplement appends the protocol to the first turn.
 
          NB: we do NOT enable the direct-HTTP MCP path (air.mcp.use.direct.http). It defaults to false → the
          agent reaches the IDE MCP server via the user's .mcp.json (ij-proxy stdio). See DocentWorkbenchSetup. -->
@@ -10,11 +14,19 @@
         <postStartupActivity implementation="com.kevingosse.docent.awb.DocentWorkbenchSetup"/>
     </extensions>
 
-    <!-- Inject the Docent protocol into an AWB-launched agent's system prompt at launch, via the air.* EP
-         com.intellij.air / threadLaunchContributor (interface
-         com.intellij.air.backend.session.launch.AgentThreadLaunchContributor); mirrors the bundled
-         AirMcpConfigLaunchContributor registration. -->
     <extensions defaultExtensionNs="com.intellij.air">
+        <!-- Terminal surface: inject the Docent protocol into the agent's command line at launch, via the air.* EP
+             com.intellij.air.threadLaunchContributor (interface
+             com.intellij.air.backend.session.launch.AgentThreadLaunchContributor). -->
         <threadLaunchContributor implementation="com.kevingosse.docent.awb.DocentLaunchContributor"/>
+        <!-- ACP surface: append the Docent protocol to the outgoing turn (full text on a thread's first turn), via
+             com.intellij.air.acpPromptSupplement (interface com.intellij.air.acp.runtime.AcpPromptSupplement). -->
+        <acpPromptSupplement implementation="com.kevingosse.docent.awb.DocentAcpPromptSupplement"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij.air.acp">
+        <!-- ACP surface: contribute the docent-only MCP endpoint to session/new, via
+             com.intellij.air.acp.mcpServerProvider (interface com.intellij.air.acp.AcpMcpServerProvider). -->
+        <mcpServerProvider implementation="com.kevingosse.docent.awb.DocentAcpMcpServerProvider"/>
     </extensions>
 </idea-plugin>
