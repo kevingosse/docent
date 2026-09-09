@@ -666,7 +666,10 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
                 ApplicationManager.getApplication().invokeLater({ onReply(reply) }, ModalityState.any())
             },
             onStalled = { eventId ->
-                ApplicationManager.getApplication().invokeLater({ onStalled { service.nudge(eventId) } }, ModalityState.any())
+                ApplicationManager.getApplication().invokeLater(
+                    { onStalled { onResult -> service.nudge(eventId, onResult) } },
+                    ModalityState.any(),
+                )
             },
         )
     }

@@ -59,6 +59,27 @@ built* lives in the code and its comments, not here.
 > `docs/AWB-2026.3-COMPAT.md` (0.8.0 section). **User-verified live on IDEA 2026.3 / Air 263.4739.0**
 > (2026-09-08): the ACP Claude thread gets the `docent` MCP server and the protocol.
 
+> **2026-09-09, 0.8.1:** "Connect agent…" threw on an IDEA 2026.3 nightly (263.4825):
+> `runBlockingCancellable` is forbidden on the EDT, and every push into an agent thread (connect, start
+> review, nudge, new-session launch) was a click handler blocking on Air's suspending launch API — on the
+> ACP surface there is no live terminal to type into, so that fallback is now the *normal* path. Fix: the
+> service's `pushToAgent` runs the `EventNotifier` on a pooled thread and hands the verdict back on the
+> EDT; `nudge` and `AgentSessionLauncher.startSession` became callback-style; the UI shows a
+> "Contacting…/Starting…" notice meanwhile. Same build also moved the seam: `AgentPromptLaunchRequest`
+> is keyed by `workspaceId: SessionWorkspaceId` + `projectDirectory` instead of `projectPath` (taken from
+> the store's workspace entry, else derived via `sessionWorkspaceIdFromBackendPath`). `DocentSeamCheck`
+> now probes the request's field shape. Details: `docs/AWB-2026.3-COMPAT.md` (0.8.1 section).
+> **User-verified on 263.4825** that the EDT exception is gone.
+
+> **2026-09-09, 0.8.2:** with 0.8.1 the push ran but Air rejected every one with `PROVIDER_UNAVAILABLE`
+> (idea.log: "push to thread acp:… not delivered (PROVIDER_UNAVAILABLE)"), so "Connect agent…" and
+> "Start review" always showed "Couldn't message that session" even for a live thread. Cause: the synthesized
+> launch profile carried only an agent id. Air resolves the profile to an exact **route** (agent + launch
+> target + interaction surface) and looks the target thread up BY that route; a profile without target +
+> surface has no route and fails before the thread is considered. Fix: `DocentEventNotifier` builds the profile
+> from the target `AgentThread`'s stored route (`agentLaunchRouteOrNull()`), the recipe Air's code-review
+> follow-up uses. **Built; not yet click-tested.**
+
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
 > `mcp_servers.*` overrides its app-server doesn't have — and the workbench spawns that app-server

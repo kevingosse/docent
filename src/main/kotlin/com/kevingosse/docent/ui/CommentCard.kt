@@ -53,7 +53,7 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
 
     /** Set when the awaited reply blew the liveness timeout: the spinner becomes a "not responding" row
      *  offering this nudge (re-push the remark into the agent's chat; false → unreachable). */
-    private var stalledNudge: (() -> Boolean)? = null
+    private var stalledNudge: Nudge? = null
 
     private fun isDocent() = thread.author.equals("docent", ignoreCase = true)
     private fun isUser() = thread.author.equals("you", ignoreCase = true)
@@ -187,7 +187,7 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
 
     /** The reply blew the liveness timeout: warn, offer a nudge (re-push into the agent's chat), and let the
      *  reviewer dismiss back to the input. A late reply still lands via [routeToAgent]'s callback. */
-    private fun stalledRow(nudge: () -> Boolean): JComponent {
+    private fun stalledRow(nudge: Nudge): JComponent {
         // widthProvider: the row sits in FlowLayout/VerticalLayout, which ask preferred height before assigning
         // width — derive the wrap width from the card itself (minus the icon column) or the text never wraps.
         val status = DocentUi.WrappingText(
@@ -197,12 +197,16 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
         val nudgeLink = ActionLink("Nudge the Docent")
         nudgeLink.addActionListener {
             nudgeLink.isVisible = false
-            status.text = if (nudge()) {
-                "Nudged — the comment was re-sent to the agent's chat."
-            } else {
-                "Couldn't reach the agent. Open its chat tab, or reconnect via “Connect agent…”."
-            }
+            status.text = "Nudging the Docent…"
             onChanged?.invoke()
+            nudge { delivered ->
+                status.text = if (delivered) {
+                    "Nudged — the comment was re-sent to the agent's chat."
+                } else {
+                    "Couldn't reach the agent. Open its chat tab, or reconnect via “Connect agent…”."
+                }
+                onChanged?.invoke()
+            }
         }
         val dismissLink = ActionLink("Dismiss") {
             waiting = false

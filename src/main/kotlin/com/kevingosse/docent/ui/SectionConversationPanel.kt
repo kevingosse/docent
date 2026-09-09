@@ -233,7 +233,7 @@ class SectionConversationPanel(
             endTurn()
         }
         override fun onError(message: String) = onEdt { failTurn(message) }
-        override fun onStalled(nudge: () -> Boolean) = onEdt { showStalled(nudge) }
+        override fun onStalled(nudge: Nudge) = onEdt { showStalled(nudge) }
     }
 
     private fun endTurn() {
@@ -260,7 +260,7 @@ class SectionConversationPanel(
      * (the reviewer isn't held hostage by a dead agent), and offer a nudge. The reply sink stays live — if the
      * Docent answers after all, [turn]'s onReply removes this notice and the reply lands normally.
      */
-    private fun showStalled(nudge: () -> Boolean) {
+    private fun showStalled(nudge: Nudge) {
         if (!busy) return // the reply landed in the meantime
         removeThinking()
         busy = false
@@ -276,20 +276,24 @@ class SectionConversationPanel(
     }
 
     /** Warning icon + explanation + a "Nudge the Docent" link that re-pushes the remark into the agent's chat. */
-    private fun stalledRow(nudge: () -> Boolean): JComponent {
+    private fun stalledRow(nudge: Nudge): JComponent {
         val status = DocentUi.WrappingText(
             "The Docent hasn't responded. Its session may be busy — or its event watch may have stopped.",
         ).apply { foreground = JBColor.GRAY }
         val link = ActionLink("Nudge the Docent")
         link.addActionListener {
             link.isVisible = false
-            status.text = if (nudge()) {
-                "Nudged — the remark was re-sent to the agent's chat. Its reply will appear here."
-            } else {
-                "Couldn't reach the agent. Open its chat tab in the Agent Workbench, or reconnect via " +
-                    "“Connect agent…” in the Docent panel, then send your message again."
-            }
+            status.text = "Nudging the Docent…"
             refreshTranscript()
+            nudge { delivered ->
+                status.text = if (delivered) {
+                    "Nudged — the remark was re-sent to the agent's chat. Its reply will appear here."
+                } else {
+                    "Couldn't reach the agent. Open its chat tab in the Agent Workbench, or reconnect via " +
+                        "“Connect agent…” in the Docent panel, then send your message again."
+                }
+                refreshTranscript()
+            }
         }
         return JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             isOpaque = false

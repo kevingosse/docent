@@ -863,15 +863,17 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         service.agentProvider = picked.provider
         service.deliveryMode = deliveryModeForProvider(picked.provider)
         service.agentThreadId = picked.threadId
-        val pushed = service.eventNotifier?.notifyAgent(
-            ReviewEvent(id = "", kind = DocentReviewService.START_REVIEW),
-        ) ?: false
-        if (pushed) {
-            awaitingStartFrom = cropTitle(picked.title.ifBlank { "the agent" })
-        } else {
-            notice = "Couldn't message that session. Ask the agent in chat to call docent_finalize_trail to start the review."
-        }
+        notice = "Contacting “${cropTitle(picked.title)}”…"
         refreshList()
+        service.pushToAgent(ReviewEvent(id = "", kind = DocentReviewService.START_REVIEW)) { pushed ->
+            if (pushed) {
+                notice = null
+                awaitingStartFrom = cropTitle(picked.title.ifBlank { "the agent" })
+            } else {
+                notice = "Couldn't message that session. Ask the agent in chat to call docent_finalize_trail to start the review."
+            }
+            refreshList()
+        }
     }
 
     /** Launch a fresh agent session ([option], a workbench launch profile) that builds the review from the
@@ -887,12 +889,17 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
         val prompt = "Please start the Code Review Docent review: call docent_finalize_trail now to synthesize the " +
             "trail from the recorded decisions and open the walkthrough in the review UI."
-        if (launcher.startSession(prompt, option)) {
-            awaitingStartFrom = "“${option.label}”"
-        } else {
-            notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench instead."
-        }
+        notice = "Starting “${option.label}”…"
         refreshList()
+        launcher.startSession(prompt, option) { launched ->
+            if (launched) {
+                notice = null
+                awaitingStartFrom = "“${option.label}”"
+            } else {
+                notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench instead."
+            }
+            refreshList()
+        }
     }
 
     /** Launch a fresh agent session ([option], a workbench launch profile) and tell it to resume on the loaded
@@ -911,15 +918,16 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val prompt = "Please resume the Code Review Docent review for the trail at `$path`. " +
             "Call docent_resume_review(path=\"$path\") now to load it into the review UI and connect yourself as " +
             "the Docent, then read the trail file to refresh the WHY before answering the reviewer."
-        if (!launcher.startSession(prompt, option)) {
-            notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench, then use Connect agent again."
-            refreshList()
-            return
-        }
-        // The launched agent calls docent_resume_review, which arms the review (reviewActive) and pins itself as
-        // the push target via its sessionToken. The launch contributor sets agentProvider + deliveryMode for this
-        // provider as it launches. The status flips when the resume lands (onConnectionChanged).
+        notice = "Starting “${option.label}”…"
         refreshList()
+        launcher.startSession(prompt, option) { launched ->
+            // The launched agent calls docent_resume_review, which arms the review (reviewActive) and pins itself
+            // as the push target via its sessionToken. The launch contributor sets agentProvider + deliveryMode
+            // for this provider as it launches. The status flips when the resume lands (onConnectionChanged).
+            notice = if (launched) null
+            else "Couldn't start “${option.label}”. Start one from the Agent Workbench, then use Connect agent again."
+            refreshList()
+        }
     }
 
     /** Pin [picked] as the review's agent and tell it to resume on the loaded trail. */
@@ -937,21 +945,24 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // The resume push is the ONLY way to wake an idle session and tell it it's the Docent — unlike ongoing
         // actions, there's no watched log for it to catch up on. If it doesn't land, the agent isn't listening:
         // roll the arm back rather than show a false "connected".
-        val delivered = service.eventNotifier?.notifyAgent(
-            ReviewEvent(
-                id = "",
-                kind = DocentReviewService.REVIEW_RESUMED,
-                file = service.trailPath ?: "",
-                text = controller.trail?.subject ?: "",
-            ),
-        ) ?: false
-        if (delivered) showConnectChoices = false // collapse the picker; we're connected now
-        else {
-            service.reset() // clears reviewActive + the just-begun event log; the trail stays loaded
-            linkedTitle = null
-            showActivateFirst(picked)
-        }
+        notice = "Contacting “${cropTitle(picked.title)}”…"
         refreshList()
+        val resume = ReviewEvent(
+            id = "",
+            kind = DocentReviewService.REVIEW_RESUMED,
+            file = service.trailPath ?: "",
+            text = controller.trail?.subject ?: "",
+        )
+        service.pushToAgent(resume) { delivered ->
+            notice = null
+            if (delivered) showConnectChoices = false // collapse the picker; we're connected now
+            else {
+                service.reset() // clears reviewActive + the just-begun event log; the trail stays loaded
+                linkedTitle = null
+                showActivateFirst(picked)
+            }
+            refreshList()
+        }
     }
 
     /** The picked session can't be reached right now (a chat tab that hasn't been activated this IDE run). Tell

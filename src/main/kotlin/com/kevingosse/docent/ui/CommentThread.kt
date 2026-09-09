@@ -28,13 +28,16 @@ data class Reply(val author: String, val body: String)
  *
  * [onStalled] fires (on the EDT) when the remark goes unanswered past the liveness timeout: the card swaps its
  * spinner for a "not responding" affordance offering the passed nudge (re-pushes the remark into the agent's
- * chat; false → unreachable). A late reply may still arrive via [onReply] afterwards.
+ * chat; the callback's false → unreachable). A late reply may still arrive via [onReply] afterwards.
  */
+/** Re-push a stalled remark into the agent's chat; the callback gets delivered/not on the EDT. */
+typealias Nudge = (onResult: (Boolean) -> Unit) -> Unit
+
 fun interface CommentPoster {
     fun post(
         thread: CommentThread,
         reviewerText: String,
         onReply: (String) -> Unit,
-        onStalled: (nudge: () -> Boolean) -> Unit,
+        onStalled: (nudge: Nudge) -> Unit,
     )
 }

@@ -1,5 +1,7 @@
 package com.kevingosse.docent
 
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -165,9 +167,24 @@ class DocentReviewService(private val project: Project) {
      * stalled spinner: the file watch may have died with the agent none the wiser, but a chat push wakes it.
      * False when the event was already answered, or no push channel can reach the agent.
      */
-    fun nudge(eventId: String): Boolean {
-        val event = pendingEvents[eventId] ?: return false
-        return eventNotifier?.notifyAgent(event) == true
+    fun nudge(eventId: String, onResult: (Boolean) -> Unit) {
+        val event = pendingEvents[eventId] ?: return onResult(false)
+        pushToAgent(event, onResult)
+    }
+
+    /**
+     * Push [event] into the agent's chat thread via the [EventNotifier] on a pooled thread, then hand the
+     * delivered/not verdict to [onResult] on the EDT. The notifier bridges into the workbench's suspending
+     * launch API with a blocking call, which the platform forbids on the EDT — and every push originates from a
+     * click (connect, start review, nudge), so the hop is mandatory. False when no notifier is installed.
+     */
+    fun pushToAgent(event: ReviewEvent, onResult: (Boolean) -> Unit) {
+        val notifier = eventNotifier ?: return onResult(false)
+        val app = ApplicationManager.getApplication()
+        app.executeOnPooledThread {
+            val delivered = runCatching { notifier.notifyAgent(event) }.getOrDefault(false)
+            app.invokeLater({ if (!project.isDisposed) onResult(delivered) }, ModalityState.any())
+        }
     }
 
     /**
@@ -357,7 +374,9 @@ data class SessionLaunchOption(
  * resume a review when no suitable existing session is connectable (e.g. only a brand-new, not-yet-started tab
  * exists, which has no id to target). The launched agent is told to call `docent_resume_review`, which arms the
  * loop and pins the push target via its sessionToken — so the UI need not know the new session's id. Implemented
- * by the optional AWB module (`awb/WorkbenchAgentLauncher`). Returns true if the launch was accepted.
+ * by the optional AWB module (`awb/WorkbenchAgentLauncher`). [startSession] runs the launch off the EDT (the
+ * workbench's launch API is suspending and may not be blocked on from the EDT) and calls [onResult] on the EDT
+ * with whether the launch was accepted.
  *
  * [launchOptions] lists the ways a session can be launched — the workbench's launch profiles for the supported
  * providers — and [startSession] launches one of them. The launch contributor then injects the right Docent
@@ -365,7 +384,7 @@ data class SessionLaunchOption(
  */
 interface AgentSessionLauncher {
     fun launchOptions(): List<SessionLaunchOption>
-    fun startSession(initialPrompt: String, option: SessionLaunchOption): Boolean
+    fun startSession(initialPrompt: String, option: SessionLaunchOption, onResult: (Boolean) -> Unit)
 }
 
 /** One human action during the review, delivered to the authoring agent via `docent_await_event`. */
@@ -395,5 +414,6 @@ data class QueuedChange(val summary: String, val file: String, val line: Int, va
  * run), so the UI marks those unreachable ([AgentSessionInfo.reachable]) and asks the user to activate them.
  */
 interface EventNotifier {
+    /** Blocking; must be called off the EDT (see [DocentReviewService.pushToAgent]). */
     fun notifyAgent(event: ReviewEvent): Boolean
 }

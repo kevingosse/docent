@@ -41,6 +41,21 @@ internal object DocentSeamCheck {
         if (AwbReflect.load(cl, PROMPT_LAUNCH_CLIENT_FQN) == null) {
             add("AgentPromptBackendApi is gone (can't push events to an idle thread, or start new sessions)")
         }
+        // The request the seam constructs statically: 263.4825 re-keyed it from `projectPath` to
+        // `workspaceId: SessionWorkspaceId` + `projectDirectory` — a silent NoSuchMethodError inside the push
+        // otherwise, which the notifier's catch-all would report as a bland "not delivered".
+        val launchRequest = AwbReflect.load(cl, PROMPT_LAUNCH_REQUEST_FQN)
+        if (launchRequest == null) {
+            add("AgentPromptLaunchRequest is gone (can't push events to an idle thread, or start new sessions)")
+        } else if (LAUNCH_REQUEST_FIELDS.any { name -> launchRequest.declaredFields.none { it.name == name } }) {
+            add(
+                "AgentPromptLaunchRequest changed shape (has ${launchRequest.declaredFields.map { it.name }}, " +
+                    "expected $LAUNCH_REQUEST_FIELDS; event push + new-session launch will fail)",
+            )
+        }
+        if (AwbReflect.load(cl, WORKSPACE_IDS_FQN)?.methods?.none { it.name == WORKSPACE_ID_FROM_PATH } != false) {
+            add("sessionWorkspaceIdFromBackendPath is gone (can't address a launch request by workspace)")
+        }
 
         // The ACP-surface seams (the default Chat route for Claude/Codex since Air 263.x). Their EP interfaces are
         // implemented statically by DocentAcpMcpServerProvider / DocentAcpPromptSupplement, so a rename means the
@@ -113,6 +128,14 @@ internal object DocentSeamCheck {
 
     /** The prompt-launch RPC surface used by both the push fallback and "start a new session". */
     private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.shared.prompt.AgentPromptBackendApi"
+
+    /** Its request, and the fields the seam passes (263.4825 shape). */
+    private const val PROMPT_LAUNCH_REQUEST_FQN = "com.intellij.air.shared.prompt.AgentPromptLaunchRequest"
+    private val LAUNCH_REQUEST_FIELDS = listOf("workspaceId", "projectDirectory", "launchProfile", "initialMessageRequest", "targetThreadId")
+
+    /** `SessionWorkspaceIds.kt` top-level helpers; the seam derives a workspace id from a path with it. */
+    private const val WORKSPACE_IDS_FQN = "com.intellij.air.backend.session.api.SessionWorkspaceIdsKt"
+    private const val WORKSPACE_ID_FROM_PATH = "sessionWorkspaceIdFromBackendPath"
 
     /** The ACP EP interfaces [DocentAcpMcpServerProvider] / [DocentAcpPromptSupplement] implement (not value-class
      *  mangled: `SessionRef` / `AcpAgentId` are ordinary types). */

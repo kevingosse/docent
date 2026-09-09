@@ -40,7 +40,7 @@ what's left to build.
 ## Tech stack
 
 - IntelliJ Platform plugin; Kotlin 2.4.0; Gradle 9.1.0; IntelliJ Platform Gradle Plugin 2.16.0.
-- Base platform: **builds against a locally-installed 2026.3 IDE that bundles Air** (IntelliJ IDEA 263.4739,
+- Base platform: **builds against a locally-installed 2026.3 IDE that bundles Air** (IntelliJ IDEA 263.4825,
   `ideLocalPath`), `since-build 262.8665` / `until-build 263.*`, Java 21 toolchain. Air (the Agent Workbench's new
   name, plugin id `com.intellij.air` since 2026-07-28) is BUNDLED in 263 IDEs and pinned to the exact IDE build, so
   the seam compiles against `bundledPlugin("com.intellij.air")`; `airPluginPath` overrides with a standalone
@@ -53,8 +53,8 @@ what's left to build.
 - `instrumentCode` and `buildSearchableOptions` are disabled (Kotlin-only, no custom Settings) — see
   the comments in `build.gradle.kts`.
 - **Single artifact, one `src/awb` seam, one Air generation.** Shared Air-free code stays in `src/main`; the
-  seam (gated `docent-awb.xml` on plugin id `com.intellij.air`) tracks exactly one Air build — as of 0.8.0
-  **263.4739.0** (bundled in IDEA 2026.3). The core review surface is platform-clean and loads across the whole
+  seam (gated `docent-awb.xml` on plugin id `com.intellij.air`) tracks exactly one Air build — as of 0.8.1
+  **263.4825** (bundled in the IDEA 2026.3 nightly). The core review surface is platform-clean and loads across the whole
   since/until range; on a 262 IDE (Air still id `com.intellij.agent.workbench`) the seam simply doesn't load.
 - **Air has TWO session surfaces and the Docent must serve both.** Terminal (CLI in a terminal tab): the
   `threadLaunchContributor` EP appends `--append-system-prompt` / `--mcp-config` (Claude) or `-c` overrides

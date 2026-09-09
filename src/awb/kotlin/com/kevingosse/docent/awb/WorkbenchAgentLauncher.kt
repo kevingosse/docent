@@ -1,5 +1,6 @@
 package com.kevingosse.docent.awb
 
+import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
 
 import com.intellij.air.frontend.core.agentCatalogSnapshot
@@ -14,9 +15,11 @@ import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
 import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
 
 import com.intellij.air.frontend.launch.quickStartLabel
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.progress.runBlockingCancellable
+import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.kevingosse.docent.AgentSessionLauncher
 import com.kevingosse.docent.SessionLaunchOption
@@ -35,7 +38,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * The launch itself goes through the backend RPC surface [AgentPromptBackendApi] (the frontend wrapper around it
  * is Kotlin-`internal`); both `getInstance()` and `launchPrompt(...)` are `suspend` → bridged with
- * [runBlockingCancellable].
+ * [runBlockingMaybeCancellable] on a pooled thread (the platform forbids blocking the EDT, and [startSession] is
+ * always a click), with the verdict handed back on the EDT.
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
@@ -106,29 +110,35 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
             }
     }
 
-    override fun startSession(initialPrompt: String, option: SessionLaunchOption): Boolean {
-        return try {
-            val base = project.basePath ?: return false
-            // Re-resolve if the UI's option outlived the last build (profile ids are stable). Null → the fallback
-            // plain-agent option; synthesize a minimal profile carrying just the agent id.
-            val profile = profilesById[option.id]
-                ?: runCatching { profileOptions() }.getOrNull()?.let { profilesById[option.id] }
-            val launchProfile = profile ?: minimalProfile(providerIdOf(option.provider))
-            val result = runBlockingCancellable {
-                AgentPromptBackendApi.getInstance().launchPrompt(
-                    AgentPromptLaunchRequest(
-                        launchProfile = launchProfile,
-                        projectPath = base,
-                        initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
-                        targetThreadId = null, // null → start a NEW thread rather than prompt an existing one
-                    ),
-                )
+    override fun startSession(initialPrompt: String, option: SessionLaunchOption, onResult: (Boolean) -> Unit) {
+        val base = project.basePath ?: return onResult(false)
+        val app = ApplicationManager.getApplication()
+        app.executeOnPooledThread {
+            val launched = try {
+                // Re-resolve if the UI's option outlived the last build (profile ids are stable). Null → the
+                // fallback plain-agent option; synthesize a minimal profile carrying just the agent id.
+                val profile = profilesById[option.id]
+                    ?: runCatching { profileOptions() }.getOrNull()?.let { profilesById[option.id] }
+                val launchProfile = profile ?: minimalProfile(providerIdOf(option.provider))
+                val result = runBlockingMaybeCancellable {
+                    AgentPromptBackendApi.getInstance().launchPrompt(
+                        AgentPromptLaunchRequest(
+                            // 263.4825: addressed by workspace id + project directory (was: one projectPath).
+                            workspaceId = sessionWorkspaceIdFromBackendPath(base),
+                            projectDirectory = base,
+                            launchProfile = launchProfile,
+                            initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
+                            targetThreadId = null, // null → start a NEW thread rather than prompt an existing one
+                        ),
+                    )
+                }
+                if (!result.launched) LOG.info("Docent: new-session launch not accepted (${result.error})")
+                result.launched
+            } catch (t: Throwable) {
+                LOG.warn("Docent: failed to start a new agent session", t)
+                false
             }
-            if (!result.launched) LOG.info("Docent: new-session launch not accepted (${result.error})")
-            result.launched
-        } catch (t: Throwable) {
-            LOG.warn("Docent: failed to start a new agent session", t)
-            false
+            app.invokeLater({ if (!project.isDisposed) onResult(launched) }, ModalityState.any())
         }
     }
 

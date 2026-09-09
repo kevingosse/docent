@@ -18,8 +18,9 @@ plugins {
 //     `com.intellij.air` (no alias), and Claude/Codex became "folded" ACP agents — the default Chat surface
 //     launches them through the ACP adapter with an EMPTY terminal command, so CLI-arg injection only reaches
 //     the Terminal surface. The ACP surface is served through Air's ACP EPs (`acp.mcpServerProvider`,
-//     `acpPromptSupplement`) instead. As of 0.8.0 the seam targets THIS generation. Full map:
-//     docs/AWB-2026.3-COMPAT.md.
+//     `acpPromptSupplement`) instead.
+//   * 263.4825 (2026.3 nightly): `AgentPromptLaunchRequest(projectPath)` → `(workspaceId: SessionWorkspaceId,
+//     projectDirectory)`. As of 0.8.1 the seam targets THIS generation. Full map: docs/AWB-2026.3-COMPAT.md.
 // So: re-verify the seam (javap the installed air-plugin jars) whenever Air or the IDE updates, and let
 // DocentSeamCheck report at runtime what a newer build broke.
 //
