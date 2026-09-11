@@ -78,7 +78,14 @@ built* lives in the code and its comments, not here.
 > target + interaction surface) and looks the target thread up BY that route; a profile without target +
 > surface has no route and fails before the thread is considered. Fix: `DocentEventNotifier` builds the profile
 > from the target `AgentThread`'s stored route (`agentLaunchRouteOrNull()`), the recipe Air's code-review
-> follow-up uses. **Built; not yet click-tested.**
+> follow-up uses. **Never ran on the user's IDE** — see 0.8.3.
+
+> **2026-09-11, 0.8.3:** the user's IDE had moved to IU-263.4953 and the 0.8.2 push died before reaching Air
+> with `NoSuchMethodError: AgentPromptLaunchRequest.<init>(…)` (idea.log, swallowed into "Couldn't message that
+> session"). Air added a trailing `preallocatedThreadId: String?` to the request; the Kotlin synthetic default
+> ctor changed arity, so the 0.8.2 binary (compiled on 263.4825) no longer bound. Fix: rebuild against 263.4953
+> (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
+> **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries

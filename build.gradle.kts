@@ -20,7 +20,10 @@ plugins {
 //     the Terminal surface. The ACP surface is served through Air's ACP EPs (`acp.mcpServerProvider`,
 //     `acpPromptSupplement`) instead.
 //   * 263.4825 (2026.3 nightly): `AgentPromptLaunchRequest(projectPath)` → `(workspaceId: SessionWorkspaceId,
-//     projectDirectory)`. As of 0.8.1 the seam targets THIS generation. Full map: docs/AWB-2026.3-COMPAT.md.
+//     projectDirectory)`.
+//   * 263.4953 (2026.3 nightly): `AgentPromptLaunchRequest` gained a trailing `preallocatedThreadId` param; the
+//     0.8.2 binary died with NoSuchMethodError on its synthetic default ctor (source-compatible, binary-incompatible).
+//     As of 0.8.3 the seam targets THIS generation. Full map: docs/AWB-2026.3-COMPAT.md.
 // So: re-verify the seam (javap the installed air-plugin jars) whenever Air or the IDE updates, and let
 // DocentSeamCheck report at runtime what a newer build broke.
 //
