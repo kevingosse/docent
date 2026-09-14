@@ -277,6 +277,25 @@ class DocentReviewService(private val project: Project) {
         onConnectionChanged?.invoke()
     }
 
+    /**
+     * Human pressed "Discard review": leave review mode WITHOUT handing the agent anything to implement. The
+     * queued changes are dropped here, and the agent is told so (REVIEW_DISCARDED — the watch exits on it, just
+     * like on completion) so it stops waiting and does not act on the queue. Reply sinks and stall timers are
+     * cleared too: the review surface is being torn down, so nothing is left to route a late reply into.
+     */
+    fun discardReview() {
+        val dropped = changes.size
+        dispatch(ReviewEvent(id = "", kind = REVIEW_DISCARDED, text = dropped.toString()))
+        changes.clear()
+        replySinks.clear()
+        stallTimers.values.forEach { it.cancel(false) }
+        stallTimers.clear()
+        pendingEvents.clear()
+        reviewActive = false
+        onChangesUpdated?.invoke()
+        onConnectionChanged?.invoke()
+    }
+
     /** Tear down any in-flight loop state (new review, or "Reload trail"). Leaves [agentProvider]/[deliveryMode]
      *  alone — they're set per launch by the contributor and shouldn't be cleared out from under a fresh arm. */
     fun reset() {
@@ -299,6 +318,7 @@ class DocentReviewService(private val project: Project) {
         const val REPLY_STALL_SECONDS = 150L
 
         const val REVIEW_COMPLETED = "review_completed"
+        const val REVIEW_DISCARDED = "review_discarded"
         const val REVIEW_RESUMED = "review_resumed"
         const val START_REVIEW = "start_review"
         const val KIND_MESSAGE = "message"

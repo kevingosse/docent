@@ -21,18 +21,22 @@ import java.awt.Dimension
 import java.awt.Font
 import java.awt.LayoutManager
 import java.awt.Rectangle
-import java.awt.event.KeyAdapter
+import java.awt.event.ActionEvent
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import javax.swing.AbstractAction
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTextPane
+import javax.swing.KeyStroke
 import javax.swing.Scrollable
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.DefaultEditorKit
 
 /**
  * The section as a conversation (docs/DESIGN.md §6/§8). It opens with the section **narration** as the Docent's
@@ -126,14 +130,14 @@ class SectionConversationPanel(
         )
 
         sendButton.addActionListener { send() }
-        input.addKeyListener(object : KeyAdapter() {
-            override fun keyPressed(e: KeyEvent) {
-                if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
-                    e.consume()
-                    send()
-                }
-            }
+        // Enter sends; Shift+Enter inserts a line break. Both go through the input map: Swing's default
+        // JTextArea keymap binds only plain Enter to insert-break, so a Shift+Enter keypress matches nothing
+        // and the typed newline is then dropped as a control character — it has to be bound explicitly.
+        input.inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "docent-send")
+        input.actionMap.put("docent-send", object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent) = send()
         })
+        input.inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), DefaultEditorKit.insertBreakAction)
         // Grow the input with its content (up to ~6 rows), and only offer Send when there's something to send.
         input.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent) = onInputChanged()

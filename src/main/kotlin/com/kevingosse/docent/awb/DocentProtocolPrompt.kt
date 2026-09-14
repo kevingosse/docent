@@ -71,6 +71,8 @@ internal object DocentProtocolPrompt {
             changes now (editing is allowed), recording a docent_record_decision per implemented request (what
             the reviewer asked, how you addressed it). Then tell the user the changes are ready for a follow-up
             review — the user starts it; do NOT finalize on your own.
+          - a "review_discarded" event: the reviewer abandoned the review; the watch exits itself. Do NOT
+            implement anything — the queue is dropped. Acknowledge in one line and wait for the user.
         Do NOT block on docent_await_event when you have a watch command — the file watch is the inbound path.
     """.trimIndent()
 
@@ -86,8 +88,10 @@ internal object DocentProtocolPrompt {
             allowed), recording a docent_record_decision per implemented request (what the reviewer asked, how
             you addressed it). Then tell the user the changes are ready for a follow-up review — the user
             starts it; do NOT finalize on your own.
-        Keep calling docent_await_event after every event until review_completed. If the call ever returns a
-        timeout/error before an event (a quiet review), that's expected — simply call it again.
+          - a "review_discarded" envelope: the reviewer abandoned the review. Do NOT implement anything — the
+            queue is dropped. Stop calling docent_await_event, acknowledge in one line and wait for the user.
+        Keep calling docent_await_event after every event until review_completed or review_discarded. If the
+        call ever returns a timeout/error before an event (a quiet review), that's expected — simply call it again.
     """.trimIndent()
 
     /** Back-compat alias for the Monitor (Claude) protocol. Prefer [forDelivery]. */

@@ -81,8 +81,10 @@ class DocentMcpToolset : McpToolset {
         |    for a change, also call docent_queue_change, then call this tool again.
         |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes,
         |    recording a docent_record_decision per implemented request so the delta can be reviewed next.
+        |  - {"event":"review_discarded", "droppedChanges"}: the reviewer abandoned the review — implement
+        |    NOTHING (the queue is dropped), stop calling this tool, and wait for the user.
         |It blocks until something is pending (no server-side timeout); keep calling it after each event until
-        |review_completed. If a call returns a timeout/error before any event (a quiet review outlasted your MCP
+        |review_completed or review_discarded. If a call returns a timeout/error before any event (a quiet review outlasted your MCP
         |client's tool timeout), that's expected — just call it again; the review is not over.
         """
     )
@@ -227,13 +229,15 @@ class DocentMcpToolset : McpToolset {
             appendLine("    (editing is allowed), recording a docent_record_decision per implemented request (what")
             appendLine("    the reviewer asked, how you addressed it) so the delta is reviewable the same way. Then")
             appendLine("    tell the user the changes are ready for a follow-up review; do NOT finalize on your own.")
+            appendLine("  - a \"review_discarded\" event: the reviewer abandoned the review. Implement NOTHING (the queue")
+            appendLine("    is dropped); acknowledge in one line and wait for the user's next instruction.")
             appendLine()
             if (monitor) {
                 appendLine("Start the Monitor watch now, then end your turn — each printed line arrives as a new message for")
-                appendLine("you to handle. The watch exits itself on review_completed; do NOT also call docent_await_event.")
+                appendLine("you to handle. The watch exits itself on review_completed/review_discarded; do NOT also call docent_await_event.")
                 append("So: confirm the review is open, start the Monitor watch, and end your turn.")
             } else {
-                append("Start now by calling docent_await_event, and keep calling it after each event until review_completed.")
+                append("Start now by calling docent_await_event, and keep calling it after each event until review_completed or review_discarded.")
             }
         }
     }

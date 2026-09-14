@@ -37,8 +37,10 @@ class EventLog private constructor(private val file: Path, val relativePath: Str
     companion object {
         private val LOG = logger<EventLog>()
 
-        /** Marker the watch command greps for to exit itself once the review is done (see [watchCommand]). */
+        /** Markers the watch command greps for to exit itself once the review is over — completed or
+         *  discarded (see [watchCommand]). */
         private const val COMPLETED_MARKER = """"event":"review_completed""""
+        private const val DISCARDED_MARKER = """"event":"review_discarded""""
 
         /**
          * Begin a fresh event log for a new review under [baseDir] (the repo root). Sweeps any prior
@@ -68,7 +70,7 @@ class EventLog private constructor(private val file: Path, val relativePath: Str
         /**
          * A POSIX-sh command the agent runs with its background-watch (Monitor) tool, persistent, to stream this
          * review's events. It polls the log once a second, prints each new line (the agent responds to each), and
-         * **exits itself** once it prints the `review_completed` line — so the watch cleans up without the agent
+         * **exits itself** once it prints the `review_completed` (or `review_discarded`) line — so the watch cleans up without the agent
          * having to stop it. A poll loop (not `tail -f`) is deliberate: it terminates cleanly on the marker
          * instead of leaving `tail` hung waiting for a SIGPIPE that a now-quiet log never triggers, and it doesn't
          * depend on `tail -f`'s append-detection semantics on Windows/Git-Bash.
@@ -79,7 +81,7 @@ class EventLog private constructor(private val file: Path, val relativePath: Str
                 "t=\$(wc -l < \"\$f\" 2>/dev/null || echo 0); " +
                 "while [ \"\$n\" -lt \"\$t\" ]; do " +
                 "n=\$((n+1)); l=\$(sed -n \"\${n}p\" \"\$f\"); printf '%s\\n' \"\$l\"; " +
-                "case \"\$l\" in *'$COMPLETED_MARKER'*) exit 0;; esac; " +
+                "case \"\$l\" in *'$COMPLETED_MARKER'*|*'$DISCARDED_MARKER'*) exit 0;; esac; " +
                 "done; sleep 1; done"
     }
 }

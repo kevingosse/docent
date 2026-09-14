@@ -25,6 +25,7 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.KeyStroke
+import javax.swing.text.DefaultEditorKit
 import javax.swing.SwingUtilities
 
 /**
@@ -314,11 +315,15 @@ class CommentCard(private val thread: CommentThread) : JPanel(BorderLayout()) {
      */
     private fun bodyArea(text: String): JComponent = DocentUi.markupPane(text)
 
-    /** Send on Ctrl+Enter (and Cmd+Enter on macOS); plain Enter still inserts a newline. */
+    /**
+     * Send on Ctrl+Enter (and Cmd+Enter on macOS); plain Enter still inserts a newline, and so does
+     * Shift+Enter (Swing's default keymap leaves Shift+Enter unbound, so it must be mapped explicitly).
+     */
     private fun JBTextArea.onCtrlEnter(action: () -> Unit) {
         val key = "docent-send"
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), key)
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.META_DOWN_MASK), key)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), DefaultEditorKit.insertBreakAction)
         actionMap.put(key, object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent) = action()
         })

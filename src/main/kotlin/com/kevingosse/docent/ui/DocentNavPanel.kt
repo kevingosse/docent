@@ -419,6 +419,12 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             val n = service.queuedChanges().size
             val subtitle = if (n == 0) "No changes queued" else "$n ${changes(n)} queued"
             planList.add(primaryCard("Complete review", subtitle, AllIcons.Actions.Checked, "Finish the review") { completeReview() })
+            planList.add(
+                primaryCard(
+                    "Discard review", null, AllIcons.Actions.Cancel,
+                    "Leave review mode without implementing the queued changes", accent = DocentUi.REMOVED,
+                ) { discardReview() },
+            )
         }
 
         // One bordered card that expands in place: collapsed it's a "Connect an agent" trigger, expanded it holds
@@ -506,9 +512,12 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /**
      * A bordered, clickable card for the *primary* action of a surface — visually louder than the plain
-     * [actionLinkRow] links around it, so the reviewer's eye lands on the one normal next step.
+     * [actionLinkRow] links around it, so the reviewer's eye lands on the one normal next step. [accent] is the
+     * border colour: green ([DocentUi.GO]) for the way forward, red ([DocentUi.REMOVED]) for a destructive exit.
      */
-    private fun primaryCard(title: String, subtitle: String?, icon: Icon, tooltip: String?, action: () -> Unit): JComponent {
+    private fun primaryCard(
+        title: String, subtitle: String?, icon: Icon, tooltip: String?, accent: Color = DocentUi.GO, action: () -> Unit,
+    ): JComponent {
         // Reserve: rail margins (16) + card border/padding (22) + icon gap (6) + slack.
         val titleLabel = iconTextRow(icon, "<b>${escapeHtml(title)}</b>", unscaledReserve = 56)
         val content = JPanel().apply {
@@ -524,7 +533,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             })
         }
         val card = DocentUi.RoundedPanel(null).apply {
-            border = DocentUi.cardBorder(DocentUi.GO)
+            border = DocentUi.cardBorder(accent)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             alignmentX = Component.LEFT_ALIGNMENT
             add(content, BorderLayout.CENTER)
@@ -999,6 +1008,29 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 else "✔  Review complete — the agent is implementing $n requested change${if (n == 1) "" else "s"}. " +
                     "A new review will appear here when it's ready."
             service.completeReview()
+            controller.endReview() // drop the trail → the nav returns to the start-review surface
+        }
+    }
+
+    /**
+     * "Discard review": the reviewer changed their mind about the whole change (e.g. reverted the working tree to
+     * start over). Leaves review mode WITHOUT dispatching the queue — the agent is told to implement nothing.
+     * Confirmed first: it drops the queued requests for good.
+     */
+    private fun discardReview() {
+        val service = DocentReviewService.getInstance(project)
+        val n = service.queuedChanges().size
+        val message = buildString {
+            append("Discard this review? The Docent will implement nothing")
+            append(if (n == 0) "." else " — the $n queued change${if (n == 1) "" else "s"} will be dropped.")
+            append("\n\nYour working tree is left untouched.")
+        }
+        val choice = Messages.showOkCancelDialog(
+            project, message, "Discard Review", "Discard review", Messages.getCancelButton(), Messages.getWarningIcon(),
+        )
+        if (choice == Messages.OK) {
+            completionNote = "Review discarded — nothing was implemented."
+            service.discardReview()
             controller.endReview() // drop the trail → the nav returns to the start-review surface
         }
     }

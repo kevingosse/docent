@@ -36,6 +36,18 @@ object ReviewEventEnvelope {
                 )
             }
 
+            DocentReviewService.REVIEW_DISCARDED -> {
+                o.addProperty("droppedChanges", event.text.toIntOrNull() ?: 0)
+                o.addProperty(
+                    "hint",
+                    "The reviewer DISCARDED this review. Do NOT implement any queued change — the queue has been " +
+                        "dropped and the reviewer is starting over. " +
+                        (if (monitor) "Your watch has now exited. " else "Stop calling docent_await_event. ") +
+                        "Do not edit files, do not record decisions, do not finalize a trail; just acknowledge in " +
+                        "one line and wait for the user's next instruction.",
+                )
+            }
+
             DocentReviewService.REVIEW_RESUMED -> {
                 if (event.file.isNotBlank()) o.addProperty("trailPath", event.file)
                 if (event.text.isNotBlank()) o.addProperty("subject", event.text)
