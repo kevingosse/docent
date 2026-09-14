@@ -87,6 +87,15 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-09-14, 0.8.5:** IU-263.5096 moved live terminals out of the file editor's private content fields
+> (`DocentSeamCheck` balloon: "AgentThreadViewFileEditor has none of [mountedContent, activeContent,
+> contentHost]"). They now live in a per-project registry service keyed by the vfile's new `tabKey`;
+> `AwbTerminalTab`'s bounded field walk was replaced with a registry lookup
+> (`AgentThreadViewLiveTerminalRegistryService.currentEntry(vf.tabKey).tab`, reached reflectively), and
+> `DocentSeamCheck` probes the registry + `getTabKey()` instead of the editor fields. Only affects the
+> terminal `sendText` channel + the reachability flag; ACP push was never through this path. Details:
+> `docs/AWB-2026.3-COMPAT.md` (0.8.5 section). Built, not yet click-tested.
+
 > **2026-07-10, 0.6.2:** resumed Codex tabs froze at "Loading MCP (x/y)" forever. Root cause
 > (isolated standalone, no IDE): the Codex CLI deadlocks when a `resume --remote` *client* carries
 > `mcp_servers.*` overrides its app-server doesn't have — and the workbench spawns that app-server
@@ -179,6 +188,12 @@ Workbench integration ships as **optional modules** gated on `com.intellij.mcpSe
   API map (`AWB-263-API-MAP.md`) is local-only, kept outside the repo. **Since 0.7.0 the *seam* inside
   that one artifact targets a single AWB generation** (the layered `262.8665.20260723` API) — the core
   surface still spans the whole build range.
+- **Discard review (0.8.4, built, not yet click-tested).** A red-bordered "Discard review" card sits under
+  "Complete review" mid-review. After a confirmation dialog it leaves review mode *without* dispatching the
+  queue: the queued changes are dropped, a `review_discarded` event is sent (the Monitor watch exits on it
+  like on `review_completed`; the envelope hint, protocol tails and toolset text tell the agent to implement
+  nothing and wait), and the nav returns to the start-review surface. For the "I reverted the working tree
+  and want to start over" case, where completing would have made the agent implement stale requests.
 
 **Known constraint:** on **.slnx** solutions the workbench's persisted session store has empty
 thread lists (AWB bug), so the supported prompt-launch push (`AgentPromptBackendApi`) can't find the

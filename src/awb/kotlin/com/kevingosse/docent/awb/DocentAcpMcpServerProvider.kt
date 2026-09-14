@@ -37,7 +37,9 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
     ): List<McpServer> {
         return try {
             val provider = AcpInjection.providerForAcpAgent(agentId.rawId) ?: return emptyList()
-            val threadId = sessionRef.threadId
+            // 263.5096: SessionRef lost `threadId`; the thread id is the local session id's value (Air's own
+            // AcpSessionRuntime derives it the same way, via SessionIdsKt.getSessionId).
+            val threadId = sessionRef.localSessionId.value
             AcpInjection.rememberThread(threadId, provider)
             LaunchInjection.registerPushTarget(projectDir.toString(), provider)
             val mcp = LaunchInjection.resolveDocentMcp { McpStreamUrlProvider.resolve() } ?: return emptyList()

@@ -15,8 +15,8 @@ package com.kevingosse.docent.awb
  *    interface, so a rename means the EP implementation can't load and **agents launch without the Docent
  *    protocol**; a signature change alone means [AbstractMethodError] on every launch. Loudest check here.
  *  - The prompt-launch client: the fallback push channel for a thread whose terminal isn't open.
- *  - The thread-view vfile + editor and the terminal tab: the "type into the live terminal" channel and the
- *    reachability flag in the "Connect agent…" picker ([AwbTerminalTab]).
+ *  - The thread-view vfile, the live-terminal registry and the terminal tab: the "type into the live terminal"
+ *    channel and the reachability flag in the "Connect agent…" picker ([AwbTerminalTab]).
  */
 internal object DocentSeamCheck {
 
@@ -70,6 +70,13 @@ internal object DocentSeamCheck {
                     "ACP threads won't get the docent MCP tools)",
             )
         }
+        // The provider reads the thread id off the SessionRef as localSessionId.value (263.5096 — before that,
+        // a direct `threadId`); a re-shape breaks thread bookkeeping inside the provider's catch-all.
+        val sessionRef = AwbReflect.load(cl, SESSION_REF_FQN)
+        if (sessionRef != null && AwbReflect.zeroArg(sessionRef, "getLocalSessionId") == null) {
+            add("SessionRef lost localSessionId (ACP threads can't be identified; docent MCP still contributed)")
+        }
+
         val supplement = AwbReflect.load(cl, ACP_PROMPT_SUPPLEMENT_FQN)
         if (supplement == null) {
             add("AcpPromptSupplement moved or is gone (ACP threads won't receive the Docent protocol)")
@@ -91,6 +98,9 @@ internal object DocentSeamCheck {
             if (AwbReflect.zeroArg(vfile, "getProjectPath") == null) {
                 add("AgentThreadViewVirtualFile.getProjectPath() is gone (can't scope thread tabs to the project)")
             }
+            if (AwbReflect.zeroArg(vfile, "getTabKey") == null) {
+                add("AgentThreadViewVirtualFile.getTabKey() is gone (can't look the live terminal up in the registry)")
+            }
             // The agent-id getter is value-class-mangled (getAgentId-KdGbIeA today), so match by prefix + shape.
             // NB the vfile also has an unrelated getProviderContentConfig(), which a "getProvider*" match would
             // wrongly accept — hence agentId only.
@@ -100,15 +110,33 @@ internal object DocentSeamCheck {
             }
         }
 
-        // The editor + the private content fields [AwbTerminalTab] walks to reach the live terminal.
-        val editor = AwbReflect.load(cl, AwbNames.CHAT_FILE_EDITOR_FQN)
-        if (editor == null) {
-            add("AgentThreadViewFileEditor is gone (terminal event delivery)")
-        } else if (AwbNames.EDITOR_CONTENT_FIELDS.none { name -> editor.declaredFields.any { it.name == name } }) {
+        // The live-terminal registry [AwbTerminalTab] queries (263.5096+: replaces the old walk over the file
+        // editor's private content fields).
+        val registry = AwbReflect.load(cl, AwbNames.TERMINAL_REGISTRY_SERVICE_FQN)
+        if (registry == null) {
             add(
-                "AgentThreadViewFileEditor has none of ${AwbNames.EDITOR_CONTENT_FIELDS} " +
+                "AgentThreadViewLiveTerminalRegistryService moved or is gone " +
                     "(can't reach the live terminal; events fall back to the launch client)",
             )
+        } else {
+            val currentEntry = registry.methods.firstOrNull {
+                it.name.startsWith(AwbNames.TERMINAL_REGISTRY_ENTRY_METHOD_PREFIX) &&
+                    it.parameterCount == 1 && it.parameterTypes[0] == String::class.java
+            }
+            if (currentEntry == null) {
+                add(
+                    "AgentThreadViewLiveTerminalRegistryService lost currentEntry(tabKey) " +
+                        "(can't reach the live terminal; events fall back to the launch client)",
+                )
+            } else if (currentEntry.returnType.methods.none {
+                    it.name == AwbNames.TERMINAL_ENTRY_TAB_GETTER && it.parameterCount == 0
+                }
+            ) {
+                add(
+                    "AgentThreadViewLiveTerminalEntry lost its tab accessor " +
+                        "(can't reach the live terminal; events fall back to the launch client)",
+                )
+            }
         }
 
         // The sendText carrier itself.
@@ -143,6 +171,9 @@ internal object DocentSeamCheck {
     private const val ACP_MCP_PROVIDER_METHOD = "getMcpServers"
     private const val ACP_PROMPT_SUPPLEMENT_FQN = "com.intellij.air.acp.runtime.AcpPromptSupplement"
     private const val ACP_PROMPT_SUPPLEMENT_METHOD = "supplement"
+
+    /** The ACP session handle passed to the MCP provider; the thread id hides in its localSessionId. */
+    private const val SESSION_REF_FQN = "com.intellij.air.backend.session.api.SessionRef"
 
     /** Air's persisted thread store (moved from `air.threads.state` in 263.x). */
     private const val THREADS_STATE_STORE_FQN = "com.intellij.air.backend.session.runtime.state.AgentThreadsStateStore"
