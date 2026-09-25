@@ -33,17 +33,19 @@ internal object DocentProtocolPrompt {
         absence does NOT mean they're unavailable. Do this first; do not go straight to the edit/build loop
         without them.
 
-        This JetBrains IDE has the Code Review Docent installed: the docent tools capture and review the STORY
-        of a change — the non-reconstructable WHY, never a restatement of the diff — so the user can review what
-        you did.
+        This JetBrains IDE has the Code Review Docent installed. It is a CODE REVIEW tool: it captures the STORY
+        behind the code you write — the non-reconstructable WHY behind the diff, never a restatement of it — so
+        the user can later review that diff with you.
 
-        While you work on a change, use docent_record_decision to keep track of your technical and design
-        decisions. This is your scratchpad, do not rely solely on your context as it might be lost during
-        compaction. Pass your sessionToken (given at the end of these instructions) to docent_record_decision so
-        your decisions are attributed to THIS session.
+        Every decision you record must be about code you are changing: a decision that shapes lines you have
+        edited, or are about to edit, in the user's project. Each time you make such a decision while editing,
+        call docent_record_decision right then — the record is later synthesized into the review and outlives
+        context compaction, which is what keeps it honest. A session where no project code is being modified has
+        no code decisions to record. Pass your sessionToken (given at the end of these instructions) to
+        docent_record_decision so your decisions are attributed to THIS session.
 
         Do NOT finalize or open a review on your own — there is no "the change is done, so present it" trigger.
-        Keep recording decisions and keep working; the user decides when a review happens. Present your changes
+        Keep recording code decisions as you edit and keep working; the user decides when a review happens. Present your changes
         ONLY when the user explicitly asks you to start the review — either by saying so in chat, or via a
         "[Code Review Docent]" message asking you to present your changes. Only then: ALWAYS call
         docent_change_summary first (it returns the ground-truth changed-file list, exact line ranges, your

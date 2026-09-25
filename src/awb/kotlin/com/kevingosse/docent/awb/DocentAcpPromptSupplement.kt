@@ -15,7 +15,9 @@ import com.intellij.openapi.diagnostic.logger
  * turn — a new session's first turn included — through this EP and appends the returned text to the delivered
  * prompt, wire-only (the transcript never shows it). There is no session-level system-prompt hook on the ACP path
  * (Air doesn't forward `_meta.systemPrompt` to the adapter), so the protocol rides the thread's FIRST turn in full
- * and each later turn carries a one-line reminder — see [AcpInjection.turnSupplement].
+ * and every later turn goes out untouched — see [AcpInjection.turnSupplement]. Introduced threads are
+ * remembered across IDE runs ([AcpIntroducedThreads]), so a thread resumed after a restart doesn't get the
+ * protocol again either.
  *
  * Only threads of an agent the Docent can drive are supplemented. The provider normally comes from
  * [DocentAcpMcpServerProvider], which saw the session being created; a thread resumed before that seam ran (or in
@@ -37,7 +39,7 @@ internal class DocentAcpPromptSupplement : AcpPromptSupplement {
         }
     }
 
-    /** The turn is on its way to the transport: from now on this thread only gets the reminder. */
+    /** The turn is on its way to the transport: from now on this thread's turns go out untouched. */
     override fun applied(context: AcpPromptSupplementContext) {
         AcpInjection.markIntroduced(context.threadId)
     }

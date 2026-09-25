@@ -51,7 +51,7 @@ built* lives in the code and its comments, not here.
 > Terminal (CLI in a tab) keeps the launch-contributor CLI injection, now skipped when the command is
 > empty; ACP gets the `docent` MCP entry via Air's `acp.mcpServerProvider` EP (an HTTP `McpServer` in
 > `session/new`, the same way Air adds `jetbrains_air_ide`) and the protocol via the `acpPromptSupplement`
-> EP (full protocol appended wire-only to a thread's first turn, a one-line reminder afterwards — there is
+> EP (full protocol appended wire-only to a thread's first turn, later turns untouched since 0.8.8 — there is
 > no per-session system-prompt hook on the ACP path). Both surfaces bake the Air thread id in as the
 > sessionToken. Also absorbed: `AgentThreadsStateStore` moved to `air.backend.session.runtime.state`,
 > `buildBuiltInLaunchProfiles` gained `preferTerminalSurface`, `launchProfileActionText` went
@@ -86,6 +86,23 @@ built* lives in the code and its comments, not here.
 > ctor changed arity, so the 0.8.2 binary (compiled on 263.4825) no longer bound. Fix: rebuild against 263.4953
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
+
+> **2026-09-15, 0.8.6:** resuming an ACP thread after an IDE restart re-sent the full Docent protocol on its
+> first turn, because "already introduced" was an in-memory set. Now persisted app-wide
+> (`AcpIntroducedThreads`, newest 1000 thread ids): only a thread's first turn ever gets the protocol; resumed
+> threads got the one-line reminder (dropped in 0.8.8, see below). Rebuilt against **IU-263.5160**, which also moved the prompt/launch surface:
+> pushing into an existing thread is now `AgentPromptBackendApi.promptExistingSession` (no synthesized route
+> profile any more), and Air's launch profiles became **presets** — `WorkbenchAgentLauncher`'s picker is rebuilt
+> from `agentSessionRouteItems`/`agentPickRows` + `AgentSessionPresetStateService`. The ACP seams are unchanged.
+
+> **2026-09-22, 0.8.8:** the ACP supplement no longer appends a one-line reminder to every later turn. Air
+> runs slash commands through the same supplement, so `/compact` went out as `/compact` + reminder and the agent
+> treated it as an ordinary message instead of compacting. The protocol on the first turn is enough; later
+> turns go out exactly as typed (`AcpInjection.turnSupplement` returns null once the thread is introduced).
+> Rebuilt against **IU-263.5712**: `AcpMcpServerProvider.getMcpServers` gained an `McpCapabilities` parameter (the
+> agent's advertised MCP transports); the provider now contributes the HTTP-only docent server only when the agent
+> says it speaks HTTP MCP, and `DocentSeamCheck` probes the method's arity, not just its name. Built, not click-tested.
+> Details: `docs/AWB-2026.3-COMPAT.md` (0.8.6 section). Built, not yet click-tested.
 
 > **2026-09-14, 0.8.5:** IU-263.5096 moved live terminals out of the file editor's private content fields
 > (`DocentSeamCheck` balloon: "AgentThreadViewFileEditor has none of [mountedContent, activeContent,

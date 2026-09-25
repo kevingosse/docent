@@ -1,13 +1,10 @@
 package com.kevingosse.docent.awb
 
 import com.intellij.air.shared.prompt.AgentPromptBackendApi
+import com.intellij.air.shared.prompt.AgentPromptExistingSessionRequest
 import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
-import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
-import com.intellij.air.shared.prompt.AgentPromptLaunchProfileKind
-import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
 import com.intellij.air.thread.view.AgentThreadViewVirtualFile
 import com.intellij.air.backend.session.api.AgentThread
-import com.intellij.air.backend.session.api.agentLaunchRouteOrNull
 import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.backend.session.runtime.model.AgentWorkspaceThreads
 import com.intellij.air.backend.session.runtime.state.AgentThreadsStateStore
@@ -24,21 +21,21 @@ import com.kevingosse.docent.ReviewEvent
 /**
  * Pushes a reviewer event into an agent's existing AWB thread — used to
  * wake a thread that isn't in a turn (the `REVIEW_RESUMED` / `START_REVIEW` events). Two channels:
- * (1) type into the live open thread-view terminal ([AwbTerminalTab]), (2) the backend prompt-launch client
- * with `targetThreadId`.
+ * (1) type into the live open thread-view terminal ([AwbTerminalTab]), (2) the backend prompt API's
+ * `promptExistingSession`, addressed by thread id.
  *
  * Notes on the AWB surface (see docs/AWB-2026.3-COMPAT.md):
  *  - The launcher-bridge lookup (`AgentPromptLaunchers.find()`) is gone; prompts now go through the backend RPC
  *    surface [AgentPromptBackendApi] (its frontend wrapper is Kotlin-`internal`, this interface is not). Both
- *    `getInstance()` and `launchPrompt(...)` are `suspend`, bridged from this non-suspend [notifyAgent] with
+ *    `getInstance()` and the prompt calls are `suspend`, bridged from this non-suspend [notifyAgent] with
  *    [runBlockingMaybeCancellable] — same as the pre-layering bridge call. Callers must be off the EDT (the
  *    platform forbids blocking there); [DocentReviewService.pushToAgent] provides the pooled-thread hop.
- *  - `AgentPromptLaunchRequest` is built around a required `launchProfile`. Air resolves it to an exact **launch
- *    route** (agent id + launch target + interaction surface) and then looks the target thread up BY THAT ROUTE —
- *    a profile carrying only an agent id has no route and fails as `PROVIDER_UNAVAILABLE` before the thread is
- *    even looked at. So the profile is synthesized from the target thread's own stored route (the same recipe
- *    Air's code-review follow-up uses); the agent-id-only profile is a last resort when the thread isn't in the
- *    store.
+ *  - Since Air 263.5160 prompting an EXISTING thread is its own call, `promptExistingSession(
+ *    AgentPromptExistingSessionRequest(workspaceId, projectDirectory, threadId, initialMessageRequest))`. Before
+ *    that it was `launchPrompt` with a `targetThreadId` plus a launch profile synthesized from the thread's stored
+ *    route (Air resolved the profile to an exact route and looked the thread up BY THAT ROUTE, so an agent-id-only
+ *    profile failed as `PROVIDER_UNAVAILABLE`). The new request carries no profile at all — Air finds the thread's
+ *    own route itself — so the route-profile recipe is gone.
  */
 internal class DocentEventNotifier(private val project: Project) : EventNotifier {
 
@@ -62,37 +59,32 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
         }
     }
 
-    /** Fallback push via the backend prompt-launch API. Returns true if the launch was accepted. */
+    /** Fallback push via the backend prompt API's existing-session call. Returns true if it was accepted. */
     private fun pushViaLauncher(service: DocentReviewService, threadId: String, prompt: String): Boolean {
         // 263.4825: the request is addressed by workspace id + project directory (was: one projectPath). Prefer
         // the store's own entry for the thread's workspace; otherwise derive the id from the path the same way
         // Air's backend does.
-        val owner = ownerEntry(threadId)
-        val workspace = owner?.first
-        val thread = owner?.second
+        val workspace = ownerEntry(threadId)?.first
         val projectPath = workspace?.path
             ?: service.agentProjectPath?.takeIf { it.isNotBlank() }
             ?: project.basePath
             ?: return false
-        val profile = thread?.let(::routeProfile)
-            ?: minimalProfile(providerIdOf(service.agentProvider)).also {
-                LOG.info("Docent: thread $threadId has no stored launch route; pushing with an agent-id-only profile")
-            }
+        if (workspace == null) {
+            LOG.info("Docent: thread $threadId is not in Air's thread store; pushing with the workspace derived from $projectPath")
+        }
         val result = runBlockingMaybeCancellable {
-            AgentPromptBackendApi.getInstance().launchPrompt(
-                AgentPromptLaunchRequest(
+            AgentPromptBackendApi.getInstance().promptExistingSession(
+                AgentPromptExistingSessionRequest(
                     workspaceId = workspace?.workspaceId ?: sessionWorkspaceIdFromBackendPath(projectPath),
                     projectDirectory = workspace?.projectDirectory ?: projectPath,
-                    launchProfile = profile,
+                    threadId = threadId,
                     initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt),
-                    targetThreadId = threadId,
                 ),
             )
         }
         if (!result.launched) {
             LOG.info(
-                "Docent: push to thread $threadId (project=$projectPath, route=${profile.agentId}/" +
-                    "${profile.launchTargetId}/${profile.interactionSurfaceId}) not delivered (${result.error}); " +
+                "Docent: push to thread $threadId (project=$projectPath) not delivered (${result.error}); " +
                     "falling back to the poll path. Known store paths: ${storeProjectPaths()}",
             )
         }
@@ -151,30 +143,5 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
 
     private companion object {
         private val LOG = logger<DocentEventNotifier>()
-
-        /** Map a stored agent id back to one the synthesized launch profile can carry; default to Claude when
-         *  unknown/null (the historical single-provider case). */
-        fun providerIdOf(value: String?): String =
-            if (value == AwbNames.PROVIDER_CODEX) AwbNames.PROVIDER_CODEX else AwbNames.PROVIDER_CLAUDE
-
-        /** A launch profile pinned to [thread]'s own route, so Air's exact-route resolution + target lookup both
-         *  land on it (folded ACP threads included: the route carries the ACP launch target + surface). Null when
-         *  the thread has no resolvable route (nothing we can address then). */
-        fun routeProfile(thread: AgentThread): AgentPromptLaunchProfile? {
-            val route = thread.agentLaunchRouteOrNull() ?: return null
-            return AgentPromptLaunchProfile(
-                id = "docent-push",
-                name = "Docent",
-                kind = AgentPromptLaunchProfileKind.TEMPORARY,
-                agentId = route.agentId.value,
-                launchTargetId = route.targetId.value,
-                interactionSurfaceId = route.interactionSurfaceId.value,
-            )
-        }
-
-        /** Last-resort profile carrying just the agent id; Air can't resolve a route from it, so a push with it
-         *  is expected to fail — kept so the failure is logged with the store diagnostics rather than skipped. */
-        fun minimalProfile(agentId: String): AgentPromptLaunchProfile =
-            AgentPromptLaunchProfile(id = "docent-push", name = "Docent", agentId = agentId)
     }
 }

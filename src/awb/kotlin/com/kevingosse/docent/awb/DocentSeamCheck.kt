@@ -46,11 +46,21 @@ internal object DocentSeamCheck {
         // otherwise, which the notifier's catch-all would report as a bland "not delivered".
         val launchRequest = AwbReflect.load(cl, PROMPT_LAUNCH_REQUEST_FQN)
         if (launchRequest == null) {
-            add("AgentPromptLaunchRequest is gone (can't push events to an idle thread, or start new sessions)")
+            add("AgentPromptLaunchRequest is gone (can't start new sessions)")
         } else if (LAUNCH_REQUEST_FIELDS.any { name -> launchRequest.declaredFields.none { it.name == name } }) {
             add(
                 "AgentPromptLaunchRequest changed shape (has ${launchRequest.declaredFields.map { it.name }}, " +
-                    "expected $LAUNCH_REQUEST_FIELDS; event push + new-session launch will fail)",
+                    "expected $LAUNCH_REQUEST_FIELDS; new-session launch will fail)",
+            )
+        }
+        // 263.5160: prompting an EXISTING thread is its own call + request (was: launchPrompt + targetThreadId).
+        val existingRequest = AwbReflect.load(cl, PROMPT_EXISTING_REQUEST_FQN)
+        if (existingRequest == null) {
+            add("AgentPromptExistingSessionRequest is gone (can't push events to an idle thread)")
+        } else if (EXISTING_REQUEST_FIELDS.any { name -> existingRequest.declaredFields.none { it.name == name } }) {
+            add(
+                "AgentPromptExistingSessionRequest changed shape (has ${existingRequest.declaredFields.map { it.name }}, " +
+                    "expected $EXISTING_REQUEST_FIELDS; event push will fail)",
             )
         }
         if (AwbReflect.load(cl, WORKSPACE_IDS_FQN)?.methods?.none { it.name == WORKSPACE_ID_FROM_PATH } != false) {
@@ -63,10 +73,16 @@ internal object DocentSeamCheck {
         val mcpProvider = AwbReflect.load(cl, ACP_MCP_PROVIDER_FQN)
         if (mcpProvider == null) {
             add("AcpMcpServerProvider moved or is gone (ACP threads won't get the docent MCP tools)")
-        } else if (mcpProvider.methods.none { java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_MCP_PROVIDER_METHOD }) {
+        } else if (mcpProvider.methods.none {
+                java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_MCP_PROVIDER_METHOD &&
+                    it.parameterCount == ACP_MCP_PROVIDER_ARITY
+            }
+        ) {
+            // 263.5712 grew the method by an McpCapabilities parameter; a name-only probe let that slip past, so the
+            // arity (Kotlin params + the suspend Continuation) is part of the check now.
             add(
                 "AcpMcpServerProvider.getMcpServers changed signature (found " +
-                    "${mcpProvider.methods.filter { java.lang.reflect.Modifier.isAbstract(it.modifiers) }.map { it.name }}; " +
+                    "${mcpProvider.methods.filter { java.lang.reflect.Modifier.isAbstract(it.modifiers) }.map { "${it.name}/${it.parameterCount}" }}; " +
                     "ACP threads won't get the docent MCP tools)",
             )
         }
@@ -157,9 +173,13 @@ internal object DocentSeamCheck {
     /** The prompt-launch RPC surface used by both the push fallback and "start a new session". */
     private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.shared.prompt.AgentPromptBackendApi"
 
-    /** Its request, and the fields the seam passes (263.4825 shape). */
+    /** Its new-session request, and the fields the seam passes (263.5160 shape: `targetThreadId` is gone). */
     private const val PROMPT_LAUNCH_REQUEST_FQN = "com.intellij.air.shared.prompt.AgentPromptLaunchRequest"
-    private val LAUNCH_REQUEST_FIELDS = listOf("workspaceId", "projectDirectory", "launchProfile", "initialMessageRequest", "targetThreadId")
+    private val LAUNCH_REQUEST_FIELDS = listOf("workspaceId", "projectDirectory", "launchProfile", "initialMessageRequest")
+
+    /** Its existing-thread request (`promptExistingSession`), and the fields the push passes. */
+    private const val PROMPT_EXISTING_REQUEST_FQN = "com.intellij.air.shared.prompt.AgentPromptExistingSessionRequest"
+    private val EXISTING_REQUEST_FIELDS = listOf("workspaceId", "projectDirectory", "threadId", "initialMessageRequest")
 
     /** `SessionWorkspaceIds.kt` top-level helpers; the seam derives a workspace id from a path with it. */
     private const val WORKSPACE_IDS_FQN = "com.intellij.air.backend.session.api.SessionWorkspaceIdsKt"
@@ -169,6 +189,8 @@ internal object DocentSeamCheck {
      *  mangled: `SessionRef` / `AcpAgentId` are ordinary types). */
     private const val ACP_MCP_PROVIDER_FQN = "com.intellij.air.acp.AcpMcpServerProvider"
     private const val ACP_MCP_PROVIDER_METHOD = "getMcpServers"
+    /** 263.5712: (projectDir, sessionScope, sessionRef, agentId, mcpCapabilities) + the suspend Continuation. */
+    private const val ACP_MCP_PROVIDER_ARITY = 6
     private const val ACP_PROMPT_SUPPLEMENT_FQN = "com.intellij.air.acp.runtime.AcpPromptSupplement"
     private const val ACP_PROMPT_SUPPLEMENT_METHOD = "supplement"
 

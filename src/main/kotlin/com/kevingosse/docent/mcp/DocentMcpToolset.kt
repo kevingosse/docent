@@ -251,17 +251,19 @@ class DocentMcpToolset : McpToolset {
     @McpTool
     @McpDescription(
         """
-        |The Code Review Docent captures the non-reconstructable WHY of a change and then walks a human reviewer
-        |through it live — so they stay in touch with code that is increasingly written by AI. This tool is the
-        |capture step (you'll synthesize a Trail and present it later).
-        |Record one NON-reconstructable decision while you work — the WHY the diff can't show. Call this AS YOU
-        |GO, not from memory at the end: the Trail is later synthesized from this log, which is what keeps it
-        |honest. Be calibrated (this is not a diff narration) — record only what a reviewer should know:
-        |  - choice: you picked one approach over real alternatives;
-        |  - constraint: something external forced an awkward shape;
-        |  - assumption: you relied on something not guaranteed by the code;
-        |  - surprise: you discovered something non-obvious mid-task;
-        |  - verification: you checked a claim against ground truth (and what you found).
+        |The Code Review Docent is a code review tool: it captures the non-reconstructable WHY behind the code you
+        |change and then walks a human reviewer through that diff live — so they stay in touch with code that is
+        |increasingly written by AI. This tool is the capture step (you'll synthesize a Trail and present it later).
+        |Record one NON-reconstructable decision behind code you are editing — the WHY the diff can't show. Call
+        |this AS YOU GO, at the moment you make the decision while editing: the Trail is later synthesized from
+        |this log, which is what keeps it honest. Every entry must be tied to lines you changed or are about to
+        |change in the project. Be calibrated (this is not a diff narration) — record what the reviewer of that
+        |diff should know:
+        |  - choice: you picked one implementation over real alternatives;
+        |  - constraint: something external forced the code into an awkward shape;
+        |  - assumption: the code relies on something not guaranteed by the code around it;
+        |  - surprise: something non-obvious you discovered while implementing that changed how you wrote the code;
+        |  - verification: you checked a claim the code depends on against ground truth (and what you found).
         |The full authoring flow: record_decision (repeatedly) -> change_summary -> compose Trail ->
         |finalize_trail. Do NOT finalize on your own — keep recording until the user asks you to start the
         |review (see docent_finalize_trail). Use docent_list_decisions to review what you've logged.

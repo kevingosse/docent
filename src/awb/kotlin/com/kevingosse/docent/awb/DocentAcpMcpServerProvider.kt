@@ -1,6 +1,7 @@
 package com.kevingosse.docent.awb
 
 import com.agentclientprotocol.model.HttpHeader
+import com.agentclientprotocol.model.McpCapabilities
 import com.agentclientprotocol.model.McpServer
 import com.intellij.air.acp.AcpMcpServerProvider
 import com.intellij.air.acp.api.AcpAgentId
@@ -34,9 +35,16 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
         sessionScope: CoroutineScope,
         sessionRef: SessionRef,
         agentId: AcpAgentId,
+        mcpCapabilities: McpCapabilities,
     ): List<McpServer> {
         return try {
             val provider = AcpInjection.providerForAcpAgent(agentId.rawId) ?: return emptyList()
+            // 263.5712: Air now passes the agent's advertised MCP transports. The Docent endpoint is HTTP-only, so
+            // an agent that can't speak HTTP MCP gets nothing rather than an entry it would reject.
+            if (!mcpCapabilities.http) {
+                LOG.info("Docent: ACP $provider agent ${agentId.rawId} doesn't advertise HTTP MCP support; not contributing the '${AcpInjection.DOCENT_MCP_NAME}' server")
+                return emptyList()
+            }
             // 263.5096: SessionRef lost `threadId`; the thread id is the local session id's value (Air's own
             // AcpSessionRuntime derives it the same way, via SessionIdsKt.getSessionId).
             val threadId = sessionRef.localSessionId.value

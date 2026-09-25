@@ -2,19 +2,20 @@ package com.kevingosse.docent.awb
 
 import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
-
 import com.intellij.air.frontend.core.agentCatalogSnapshot
 import com.intellij.air.frontend.core.launchAvailabilityModelOrNull
-import com.intellij.air.frontend.launch.AgentThreadLaunchProfileStateService
-import com.intellij.air.frontend.launch.resolveAgentThreadLaunchProfileItems
+import com.intellij.air.frontend.launch.AgentSessionRouteItem
+import com.intellij.air.frontend.launch.agentSessionRouteItems
+import com.intellij.air.frontend.launch.preset.agentPickRows
+import com.intellij.air.frontend.launch.preset.launchProfileOn
+import com.intellij.air.frontend.launch.presets.AgentSessionPresetStateService
+import com.intellij.air.frontend.launch.quickStartLabel
 import com.intellij.air.frontend.prompt.ui.buildEnabledAgentCatalogMenuModel
+import com.intellij.air.shared.core.thread.AgentId
 import com.intellij.air.shared.prompt.AgentPromptBackendApi
-import com.intellij.air.shared.session.buildBuiltInLaunchProfiles
 import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
 import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
 import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
-
-import com.intellij.air.frontend.launch.quickStartLabel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.service
@@ -29,12 +30,13 @@ import java.util.concurrent.ConcurrentHashMap
  * Starts a brand-new AWB thread seeded with an initial prompt (the UI's
  * "Start a new agent session" option).
  *
- * The launch-profile picker ([profileOptions]) mirrors the workbench's own new-thread menu, entirely on the
- * frontend side: the agent catalog snapshot supplies the enabled agents, `AgentThreadLaunchProfileStateService`
- * the user's profiles + ordering, and `resolveAgentThreadLaunchProfileItems` merges them into the same items the
- * tool window shows (label via `launchProfileActionText`, icon already resolved on the item). If any of that
- * fails, [launchOptions] degrades to plain per-agent launches — new sessions still start, custom profiles just
- * don't appear.
+ * The picker ([profileOptions]) mirrors Air's own new-session menu, entirely on the frontend side. Since Air
+ * 263.5160 that menu is built from **routes + presets** (the old "launch profiles" store was migrated into
+ * `AgentSessionPresetStateService` and deleted): the agent catalog snapshot supplies the enabled agents,
+ * `agentSessionRouteItems` turns them into per-agent launch routes, `agentPickRows` makes the plain per-agent rows
+ * (each carrying a ready `AgentPromptLaunchProfile`), and every user preset for a supported agent becomes one more
+ * row via `launchProfileOn` — the same recipe Air's `PresetPickSource` uses. If any of that fails, [launchOptions]
+ * degrades to plain per-agent launches — new sessions still start, presets just don't appear.
  *
  * The launch itself goes through the backend RPC surface [AgentPromptBackendApi] (the frontend wrapper around it
  * is Kotlin-`internal`); both `getInstance()` and `launchPrompt(...)` are `suspend` → bridged with
@@ -43,15 +45,15 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessionLauncher {
 
-    /** Profiles by id from the last [launchOptions] build, so [startSession] can launch the exact profile. */
+    /** Profiles by option id from the last [launchOptions] build, so [startSession] can launch the exact one. */
     private val profilesById = ConcurrentHashMap<String, AgentPromptLaunchProfile>()
 
     override fun launchOptions(): List<SessionLaunchOption> {
         val options = runCatching { profileOptions() }
-            .onFailure { LOG.warn("Docent: couldn't read the AWB launch profiles; using plain agent launches", it) }
+            .onFailure { LOG.warn("Docent: couldn't read the AWB launch routes/presets; using plain agent launches", it) }
             .getOrNull()
         if (!options.isNullOrEmpty()) return options
-        // No usable profile (pipeline failed, or every supported CLI is unavailable): plain per-agent launches.
+        // No usable route (pipeline failed, or every supported CLI is unavailable): plain per-agent launches.
         return SUPPORTED_PROVIDER_VALUES.map { agentId ->
             SessionLaunchOption(
                 id = agentId,
@@ -62,7 +64,7 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
         }
     }
 
-    /** The AWB launch-profile menu (built-ins + user profiles), filtered to the agents the Docent can drive. */
+    /** Air's new-session menu (per-agent routes + user presets), filtered to the agents the Docent can drive. */
     private fun profileOptions(): List<SessionLaunchOption> {
         // Narrow the catalog to Claude/Codex first, so every model built from it is already scoped to us.
         val catalog = agentCatalogSnapshot().let { snapshot ->
@@ -77,37 +79,54 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
             // "is the agent switched on at all" — routes/CLI reachability come from the state itself.
             .launchAvailabilityModelOrNull(isAgentEnabled = { true })
             ?: return emptyList()
-        val state = service<AgentThreadLaunchProfileStateService>()
-        val userProfiles = state.getUserLaunchProfiles().filter { it.agentId in SUPPORTED_PROVIDER_VALUES }
-        // preferTerminalSurface=false: the built-in Chat route (ACP for Claude/Codex since Air 263.x), exactly what
-        // Air's own new-thread menu offers by default. The Docent works on both surfaces, so no need to steer.
-        val builtInProfiles = buildBuiltInLaunchProfiles(
-            menuModel = menuModel,
-            availabilityModel = availability,
-            resolveName = { quickStartLabel(it) },
-            preferTerminalSurface = false,
-            catalogLaunchTargets = catalog.launchTargets,
-        )
-        return resolveAgentThreadLaunchProfileItems(
-            menuModel = menuModel,
-            availabilityModel = availability,
-            builtInProfiles = builtInProfiles,
-            userProfiles = userProfiles,
-            deletedBuiltInProfileIds = state.getDeletedBuiltInLaunchProfileIds(),
-            profileOrder = state.getLaunchProfileOrder(),
-        )
-            // The workbench grays un-launchable profiles out (CLI missing, route unavailable); we just skip them.
-            .filter { availability.isProfileLaunchable(it.profile) }
-            .map { item ->
-                profilesById[item.profile.id] = item.profile
-                SessionLaunchOption(
-                    id = item.profile.id,
-                    // Air's own action-text helper went Kotlin-internal in 263.x; the profile name is what it shows.
-                    label = item.profile.name,
-                    provider = item.profile.agentId,
-                    icon = item.icon,
-                )
-            }
+        val routes: List<AgentSessionRouteItem> = agentSessionRouteItems(
+            menuModel,
+            availability,
+            { true },
+            { quickStartLabel(it) },
+            catalog.launchTargets,
+            catalog.agents,
+        ).filter { it.agentId.value in SUPPORTED_PROVIDER_VALUES }
+        if (routes.isEmpty()) return emptyList()
+
+        profilesById.clear()
+        val options = ArrayList<SessionLaunchOption>()
+
+        // Plain per-agent rows, exactly as Air's AgentRowsPickSource builds them (no last-used / preference
+        // overrides: the Docent's picker is a one-shot menu, not the sticky new-session pick).
+        for (row in agentPickRows(routes, emptyMap(), emptyMap())) {
+            // Air grays un-launchable rows out (CLI missing, route unavailable); we just skip them. A row without
+            // a launch profile / route is a non-launch entry (header, "manage…") and is skipped too.
+            if (!row.enabled) continue
+            val launchProfile = row.launchProfile ?: continue
+            val id = "route:" + row.id.value
+            profilesById[id] = launchProfile
+            options += SessionLaunchOption(
+                id = id,
+                label = row.text,
+                provider = launchProfile.agentId.value,
+                icon = row.icon ?: row.routeItem?.icon,
+            )
+        }
+
+        // User presets (Air's PresetPickSource): a preset pins session parameters + a pre-prompt onto its agent's
+        // default route. Presets whose agent has no launchable route here are skipped like Air does.
+        val presets = runCatching { service<AgentSessionPresetStateService>().presets() }
+            .onFailure { LOG.info("Docent: couldn't read the Air session presets; offering plain agent routes only", it) }
+            .getOrDefault(emptyList())
+        for (preset in presets) {
+            if (preset.agentId !in SUPPORTED_PROVIDER_VALUES) continue
+            val route = routes.firstOrNull { it.agentId.value == preset.agentId } ?: continue
+            val id = "preset:" + preset.id
+            profilesById[id] = launchProfileOn(route, preset.sessionParameters, prompt = preset.prePrompt, name = preset.name)
+            options += SessionLaunchOption(
+                id = id,
+                label = preset.name,
+                provider = preset.agentId,
+                icon = route.icon,
+            )
+        }
+        return options
     }
 
     override fun startSession(initialPrompt: String, option: SessionLaunchOption, onResult: (Boolean) -> Unit) {
@@ -115,7 +134,7 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
         val app = ApplicationManager.getApplication()
         app.executeOnPooledThread {
             val launched = try {
-                // Re-resolve if the UI's option outlived the last build (profile ids are stable). Null → the
+                // Re-resolve if the UI's option outlived the last build (route/preset ids are stable). Null → the
                 // fallback plain-agent option; synthesize a minimal profile carrying just the agent id.
                 val profile = profilesById[option.id]
                     ?: runCatching { profileOptions() }.getOrNull()?.let { profilesById[option.id] }
@@ -128,7 +147,6 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                             projectDirectory = base,
                             launchProfile = launchProfile,
                             initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
-                            targetThreadId = null, // null → start a NEW thread rather than prompt an existing one
                         ),
                     )
                 }
@@ -153,8 +171,9 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
         private fun providerIdOf(value: String): String =
             if (value == AwbNames.PROVIDER_CODEX) AwbNames.PROVIDER_CODEX else AwbNames.PROVIDER_CLAUDE
 
-        /** A minimal launch profile carrying just the agent id, for the plain-agent fallback. */
+        /** A minimal launch profile carrying just the agent id, for the plain-agent fallback (Air resolves the
+         *  agent's default route from it — 263.5160's `resolveAgentThreadLaunchProfile`). */
         private fun minimalProfile(agentId: String): AgentPromptLaunchProfile =
-            AgentPromptLaunchProfile(id = "docent-new-$agentId", name = "Docent", agentId = agentId)
+            AgentPromptLaunchProfile(name = "Docent", agentId = AgentId.from(agentId))
     }
 }
