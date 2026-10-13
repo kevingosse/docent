@@ -246,7 +246,7 @@ class DocentReviewService(private val project: Project) {
     /**
      * Arm the live loop against a specific agent session: [threadId] is the push target (the workbench thread
      * id / Claude `--session-id`), or null when there's no push target (the agent must poll). Used by both the
-     * MCP arm path (the arming session self-identifies via its sessionToken) and the UI "Connect agent…" path
+     * MCP arm path (the session header on the tool call names the arming session) and the UI "Connect agent…" path
      * (the user picked the session, so the thread id is known authoritatively). Marks the review active and
      * notifies the UI so its interactive affordances enable.
      */
@@ -393,7 +393,7 @@ data class SessionLaunchOption(
  * Starts a fresh agent session seeded with [initialPrompt], for the UI's "start a new session" option. Used to
  * resume a review when no suitable existing session is connectable (e.g. only a brand-new, not-yet-started tab
  * exists, which has no id to target). The launched agent is told to call `docent_resume_review`, which arms the
- * loop and pins the push target via its sessionToken — so the UI need not know the new session's id. Implemented
+ * loop and pins the push target via its session header — so the UI need not know the new session's id. Implemented
  * by the optional AWB module (`awb/WorkbenchAgentLauncher`). [startSession] runs the launch off the EDT (the
  * workbench's launch API is suspending and may not be blocked on from the EDT) and calls [onResult] on the EDT
  * with whether the launch was accepted.

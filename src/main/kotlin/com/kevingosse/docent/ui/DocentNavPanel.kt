@@ -745,7 +745,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /** Ask [picked] to create and open the review now (clicked from the no-trail surface). No review is armed
      *  yet, so we set the push-target fields the notifier reads directly; the agent's docent_create_review
-     *  re-links authoritatively via its sessionToken. The empty state then shows a "preparing…" line until the
+     *  re-links authoritatively via its session header. The empty state then shows a "preparing…" line until the
      *  trail loads here. */
     private fun sendStartReview(picked: AgentSessionInfo) {
         val service = DocentReviewService.getInstance(project)
@@ -789,7 +789,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refreshList()
         launcher.startSession(prompt, option) { launched ->
             // The launched agent calls docent_resume_review, which arms the review (reviewActive) and pins itself
-            // as the push target via its sessionToken. The launch contributor sets agentProvider + deliveryMode
+            // as the push target via its session header. The launch contributor sets agentProvider + deliveryMode
             // for this provider as it launches. The status flips when the resume lands (onConnectionChanged).
             notice = if (launched) null
             else "Couldn't start “${option.label}”. Start one from the Agent Workbench, then use Connect agent again."

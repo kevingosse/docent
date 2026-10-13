@@ -27,12 +27,12 @@ Nothing is hidden: every changed file appears in some section (an auto-synthesiz
 ## First run
 
 1. Open your project and open the **Code Review Docent** tool window (left sidebar).
-2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works. Docent injects everything it needs into the launch automatically — its protocol, and its own MCP endpoint (serving only the 6 `docent_*` tools; additive, your existing MCP configuration is untouched).
+2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works. Docent adds its own MCP endpoint to the launch automatically (serving only the 6 `docent_*` tools; additive, your existing MCP configuration is untouched).
 3. Ask the agent to start a code review, or click the session in the tool window. The review opens as an editor tab; step through sections with the plan rail or **Alt+.** / **Alt+,**.
 
 ## Troubleshooting
 
-- **The agent doesn't know about the Docent** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from Air* (a plain-terminal agent doesn't get the Docent protocol); the agent's session is still open.
+- **The agent doesn't know about the Docent** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from Air* (a plain-terminal agent doesn't get the Docent tools); the agent's session is still open.
 - **"Docent isn't responding" on a question** — the agent may be busy or its session closed; use the **Nudge** link on the notice, or reopen the session and click **Connect agent…**.
 - **A workbench update broke something** — Docent self-checks its workbench integration at startup and raises a notification listing exactly what broke; update the plugin.
 

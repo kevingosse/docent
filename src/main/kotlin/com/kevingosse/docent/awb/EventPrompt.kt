@@ -28,13 +28,14 @@ internal object EventPrompt {
                 appendLine("The reviewer asks you to start a code review of the current change now.")
                 appendLine(
                     "If the docent tools aren't in your tool list, discover them first with a tool search " +
-                        "(limit 50): ${DocentProtocolPrompt.TOOL_QUERY}",
+                        "(limit 50): docent_change_summary docent_create_review docent_await_event docent_reply " +
+                        "docent_queue_change docent_resume_review",
                 )
                 appendLine(
                     "Then call docent_change_summary (it returns the changed files, exact line ranges AND the " +
                         "Trail JSON schema). Compose the Trail with those field names and call docent_create_review " +
-                        "to write it and open the review — pass your sessionToken so the review routes back to " +
-                        "THIS session. If it returns a validation error, fix exactly the named field and call it again.",
+                        "to write it and open the review. If it returns a validation error, fix exactly the named " +
+                        "field and call it again.",
                 )
             }
 

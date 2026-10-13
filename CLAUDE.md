@@ -57,11 +57,11 @@ what's left to build.
   **263.5712** (bundled in the IDEA 2026.3 nightly). The core review surface is platform-clean and loads across the whole
   since/until range; on a 262 IDE (Air still id `com.intellij.agent.workbench`) the seam simply doesn't load.
 - **Air has TWO session surfaces and the Docent must serve both.** Terminal (CLI in a terminal tab): the
-  `threadLaunchContributor` EP appends `--append-system-prompt` / `--mcp-config` (Claude) or `-c` overrides
+  `threadLaunchContributor` EP appends `--mcp-config` (Claude) or `-c` overrides
   (Codex) to the command line. ACP (the default Chat route for Claude/Codex since 263.x, "folded" agents): the
   launch spec has an EMPTY command, so the `acp.mcpServerProvider` EP contributes the `docent` HTTP MCP server to
-  `session/new` and the `acpPromptSupplement` EP appends the protocol to the thread's first turn only (later turns go
-  out untouched). Both bake the Air thread id in as the sessionToken. Rules: **javap the installed `air-plugin/lib/**.jar`
+  `session/new`. Both put the Air thread id in the entry's `X-Docent-Session` header, so a tool call names its
+  session. No instructions are injected (0.9.1): the tool descriptions carry the "call on 'start a code review'" rule. Rules: **javap the installed `air-plugin/lib/**.jar`
   and re-verify the seam whenever Air or the IDE updates** — `DocentSeamCheck` reports at runtime what a newer
   build broke. History + per-generation FQN maps: `docs/AWB-2026.3-COMPAT.md`.
 - Build: `./gradlew buildPlugin` → `build/distributions/code-review-docent-<version>.zip`.

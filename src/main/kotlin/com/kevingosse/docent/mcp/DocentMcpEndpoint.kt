@@ -96,6 +96,10 @@ class DocentMcpEndpoint(private val cs: CoroutineScope) {
     }
 
     companion object {
+        /** The header that carries the Air thread id. Launch injection adds it to each session's `docent` MCP
+         *  entry, so a tool call tells the IDE which session made it. */
+        const val SESSION_HEADER = "X-Docent-Session"
+
         private val LOG = logger<DocentMcpEndpoint>()
         fun getInstance(): DocentMcpEndpoint = service()
     }

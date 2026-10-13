@@ -20,13 +20,13 @@ import java.nio.file.Path
  * `session/new` (or `session/load`) `mcpServers` array; the `claude-acp` adapter maps `http`/`sse` entries straight
  * into the Claude Agent SDK's MCP config, so the `docent_*` tools are visible to the agent with zero user config.
  *
- * The endpoint is the docent-only authenticated HTTP server ([LaunchInjection.resolveDocentMcp]); its auth header
- * travels as an ACP `HttpHeader`. Failing to arm it falls back to Air's public IDE MCP URL, and to nothing at all
- * (empty list, never an exception — Air logs and skips a failing provider, but let's not rely on that).
+ * The endpoint is the docent-only authenticated HTTP server ([LaunchInjection.resolveDocentMcp]). Its auth header
+ * and the session header (the Air thread id) travel as ACP `HttpHeader`s. Failing to arm it falls back to Air's
+ * public IDE MCP URL, and to nothing at all (empty list, never an exception — Air logs and skips a failing
+ * provider, but let's not rely on that).
  *
- * Side effects, mirroring the terminal path: the thread's provider is remembered for [DocentAcpPromptSupplement]
- * (the supplement context carries no agent id), and the project's push target is (re)registered so a review can
- * reach this thread.
+ * Side effect, mirroring the terminal path: the project's push target is (re)registered so a review can reach this
+ * thread.
  */
 internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
 
@@ -48,11 +48,10 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
             // 263.5096: SessionRef lost `threadId`; the thread id is the local session id's value (Air's own
             // AcpSessionRuntime derives it the same way, via SessionIdsKt.getSessionId).
             val threadId = sessionRef.localSessionId.value
-            AcpInjection.rememberThread(threadId, provider)
             LaunchInjection.registerPushTarget(projectDir.toString(), provider)
             val mcp = LaunchInjection.resolveDocentMcp { McpStreamUrlProvider.resolve() } ?: return emptyList()
             LOG.info("Docent: ACP $provider session (thread=$threadId) — contributing the '${AcpInjection.DOCENT_MCP_NAME}' MCP server")
-            val headers = if (mcp.headerName != null) listOf(HttpHeader(mcp.headerName, mcp.headerValue ?: "")) else emptyList()
+            val headers = LaunchInjection.mcpHeaders(threadId, mcp).map { (name, value) -> HttpHeader(name, value) }
             listOf(McpServer.Http(AcpInjection.DOCENT_MCP_NAME, mcp.url, headers))
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t

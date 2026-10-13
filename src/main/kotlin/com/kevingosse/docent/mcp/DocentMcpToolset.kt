@@ -7,6 +7,7 @@ import com.google.gson.JsonObject
 import com.intellij.mcpserver.McpToolset
 import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
+import com.intellij.mcpserver.mcpCallInfoOrNull
 import com.intellij.mcpserver.projectOrNull
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -145,8 +146,7 @@ class DocentMcpToolset : McpToolset {
         |walking the human through it and want to pick it up now). This loads the Trail into the IDE review UI and
         |arms the live loop with you as the Docent; you do NOT re-author or re-write it. Because your earlier
         |context may be gone, READ the trail file after this so you can answer from its recorded WHY (the
-        |narration and inline comments), not from memory. Pass your sessionToken (from your system instructions)
-        |so the reviewer's actions route back to THIS session. Defaults to <repo>/.idea/docent/trail.json.
+        |narration and inline comments), not from memory. Defaults to <repo>/.idea/docent/trail.json.
         |After this, drive the review exactly as after docent_create_review: the IDE pushes each reviewer action
         |to you; reply with docent_reply, record requested changes with docent_queue_change (read-only until the
         |reviewer completes the review).
@@ -156,11 +156,6 @@ class DocentMcpToolset : McpToolset {
     suspend fun docent_resume_review(
         @McpDescription("Path to the Trail JSON. Relative paths resolve against the project root. Blank → .idea/docent/trail.json.")
         path: String = "",
-        @McpDescription(
-            "Your sessionToken from your system instructions, so the live review can message you (it routes the " +
-                "reviewer's actions back to THIS session). Omit only if you have no sessionToken."
-        )
-        sessionToken: String = "",
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
         val base = project.basePath ?: return "The project has no base path on disk."
@@ -182,22 +177,27 @@ class DocentMcpToolset : McpToolset {
         if (trail == null || trail.subject == null || trail.sections == null || trail.sections.isEmpty()) {
             return "The Trail at $abs is missing a subject or sections[]; it doesn't look like a complete Trail."
         }
-        return armReview(project, abs.toString(), trail, sessionToken)
+        return armReview(project, abs.toString(), trail, callingSession())
     }
+
+    /** The Air thread id of the session making this tool call, from the header on its `docent` MCP entry. Null
+     *  when the call didn't come through an injected entry; the review then has no push target. */
+    private suspend fun callingSession(): String? =
+        coroutineContext.mcpCallInfoOrNull?.headers?.get(DocentMcpEndpoint.SESSION_HEADER)
+            ?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
 
     /**
      * Point the review UI at [path], arm the live loop, and return the agent's drive-the-review instructions.
      * Called by [docent_create_review] after writing the Trail to open the review.
      */
-    private fun armReview(project: Project, path: String, trail: Trail, sessionToken: String = ""): String {
+    private fun armReview(project: Project, path: String, trail: Trail, threadId: String?): String {
         val service = DocentReviewService.getInstance(project)
         service.reset()
         service.trailPath = path
-        // The session that arms the review self-identifies via the sessionToken it echoed from its system
-        // prompt (= its workbench thread id). This is the push target — captured here, not from the racy
-        // last-launch capture, so review messages route to THIS session. Blank → no push; falls back to poll.
-        // linkAgentSession marks the review active and notifies the UI so its affordances enable.
-        service.linkAgentSession(sessionToken.trim().ifBlank { null })
+        // [threadId] is the calling session, so review messages route to it rather than to the last launch.
+        // Null → no push; the agent falls back to polling. linkAgentSession marks the review active and notifies
+        // the UI so its affordances enable.
+        service.linkAgentSession(threadId)
         ApplicationManager.getApplication().invokeLater {
             val controller = DocentReviewController.getInstance(project)
             controller.loadTrail() // force-load the handed-off path, then show nav + review
@@ -312,7 +312,7 @@ class DocentMcpToolset : McpToolset {
                 "the section narration. Never split one method or function across sections. Aim for a few coherent " +
                 "sections carried by rich inline comments, not many thin sections. " +
                 "Carry the non-reconstructable WHY — do NOT restate the diff. Anchor each section to files from " +
-                "changedFiles. Then submit with docent_create_review(trailJson, baseRef=\"$ref\", sessionToken).",
+                "changedFiles. Then submit with docent_create_review(trailJson, baseRef=\"$ref\").",
         )
         return o.toString()
     }
@@ -347,11 +347,6 @@ class DocentMcpToolset : McpToolset {
         trailJson: String,
         @McpDescription("The git ref the change is diffed against; use the same one you passed to docent_change_summary. Defaults to HEAD.")
         baseRef: String = "HEAD",
-        @McpDescription(
-            "Your sessionToken from your system instructions. REQUIRED so the live review can message you " +
-                "(it routes the reviewer's actions back to THIS session). Omit only if you have no sessionToken."
-        )
-        sessionToken: String = "",
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
         val projectDir = project.basePath ?: return "The project has no base path on disk."
@@ -394,7 +389,7 @@ class DocentMcpToolset : McpToolset {
             }
         }.trimEnd()
 
-        return "$report\n\n" + armReview(project, file.toString(), trail, sessionToken)
+        return "$report\n\n" + armReview(project, file.toString(), trail, callingSession())
     }
 
     /**

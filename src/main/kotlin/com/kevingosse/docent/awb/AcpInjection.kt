@@ -1,38 +1,19 @@
 package com.kevingosse.docent.awb
 
-import com.kevingosse.docent.deliveryModeForProvider
-import java.util.concurrent.ConcurrentHashMap
-
 /**
- * The **Air-free** heart of the ACP-surface injection path — the counterpart of [LaunchInjection] for agents Air
- * launches through an ACP adapter instead of a terminal command line.
+ * The **Air-free** part of the ACP-surface injection — the counterpart of [LaunchInjection] for agents Air launches
+ * through an ACP adapter instead of a terminal command line.
  *
  * Since Air 263.x, Claude and Codex are "folded" ACP agents: the default Chat surface starts them via the
  * `claude-acp` / `codex-acp` adapters with an EMPTY terminal command, so there is no command line to inject
- * `--append-system-prompt` / `--mcp-config` into. Air offers two ACP-side seams instead, and the Docent uses both
- * (thin adapters over in `src/awb`):
- *  - `AcpMcpServerProvider` (fires at `session/new` / `session/load`): contributes the docent-only MCP endpoint as
- *    an HTTP MCP server, exactly the way Air adds its own `jetbrains_air_ide` entry — so the `docent_*` tools are
- *    visible with zero user config.
- *  - `AcpPromptSupplement` (fires on every outgoing turn, the first one included): appends wire-only text to the
- *    delivered prompt. There is no per-session system-prompt hook (Air doesn't forward `_meta.systemPrompt`), so
- *    the protocol rides the FIRST turn of each thread in full and every later turn goes out untouched. "First
- *    turn" means the thread's first turn EVER: which threads were introduced is persisted across IDE runs
- *    ([AcpIntroducedThreads]), so resuming a thread after a restart doesn't replay the protocol.
- *
- * Both seams see the Air thread id (`SessionRef.threadId` == the supplement context's `threadId` == the
- * thread-view tab's id), which is the sessionToken the agent echoes back to `docent_create_review`, exactly as
- * on the terminal surface. This object remembers which agent each ACP thread runs, because the supplement
- * context carries no agent id and the protocol's delivery tail differs per provider (Claude watches the
- * EventLog with Monitor, Codex blocks on `docent_await_event`).
+ * `--mcp-config` into. `DocentAcpMcpServerProvider` (in `src/awb`) contributes the docent-only MCP endpoint at
+ * `session/new` / `session/load` instead, exactly the way Air adds its own `jetbrains_air_ide` entry, with the Air
+ * thread id in the session header.
  */
 internal object AcpInjection {
 
     /** The MCP server name the Docent contributes for its own endpoint — same name on both surfaces. */
     const val DOCENT_MCP_NAME: String = "docent"
-
-    /** ACP thread id → provider value (`"claude"` / `"codex"`), learned when the session's MCP servers were built. */
-    private val providerByThread = ConcurrentHashMap<String, String>()
 
     /**
      * Map an ACP agent's raw id (`claude-acp`, `codex-acp`, `codex`, …) to the Docent's provider vocabulary, or
@@ -46,35 +27,4 @@ internal object AcpInjection {
             else -> null
         }
     }
-
-    /** Remember which provider drives [threadId]. Called from the MCP-server seam at session creation. */
-    fun rememberThread(threadId: String, providerValue: String) {
-        if (threadId.isNotBlank()) providerByThread[threadId] = providerValue
-    }
-
-    /** The provider remembered for [threadId], or null if this IDE run never built its MCP servers. */
-    fun providerOf(threadId: String): String? = providerByThread[threadId]
-
-    /**
-     * The text to append to the turn going out on [threadId] for [providerValue]: the full Docent protocol (with
-     * the thread id baked in as the sessionToken) if [markIntroduced] has never been called for the thread — in
-     * this IDE run or any earlier one — and null afterwards, so the turn goes out exactly as the user typed it.
-     * Appending anything to later turns broke Air's slash commands: `/compact` plus a trailing reminder no longer
-     * reads as a command, so the agent treated it as an ordinary message. ACP delivers the prompt as JSON, so
-     * unlike the command line the multi-line protocol passes through intact — no [LaunchInjection.singleLine]
-     * flattening here.
-     */
-    fun turnSupplement(threadId: String, providerValue: String): String? {
-        if (AcpIntroducedThreads.isIntroduced(threadId)) return null
-        val mode = deliveryModeForProvider(providerValue)
-        return "[Code Review Docent — IDE instructions]\n" + DocentProtocolPrompt.forDelivery(mode, threadId)
-    }
-
-    /** Record that [threadId] has been handed the full protocol (call once the turn is handed to the transport). */
-    fun markIntroduced(threadId: String) {
-        AcpIntroducedThreads.markIntroduced(threadId)
-    }
-
-    /** Whether [threadId] still awaits its full-protocol turn (never introduced, in this or any earlier IDE run). */
-    fun needsIntroduction(threadId: String): Boolean = !AcpIntroducedThreads.isIntroduced(threadId)
 }

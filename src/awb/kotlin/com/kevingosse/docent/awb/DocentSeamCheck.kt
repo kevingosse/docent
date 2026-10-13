@@ -68,8 +68,8 @@ internal object DocentSeamCheck {
         }
 
         // The ACP-surface seams (the default Chat route for Claude/Codex since Air 263.x). Their EP interfaces are
-        // implemented statically by DocentAcpMcpServerProvider / DocentAcpPromptSupplement, so a rename means the
-        // EP implementation can't load and ACP threads get neither the docent MCP entry nor the protocol.
+        // implemented statically by DocentAcpMcpServerProvider, so a rename means the EP implementation can't load
+        // and ACP threads don't get the docent MCP entry.
         val mcpProvider = AwbReflect.load(cl, ACP_MCP_PROVIDER_FQN)
         if (mcpProvider == null) {
             add("AcpMcpServerProvider moved or is gone (ACP threads won't get the docent MCP tools)")
@@ -87,21 +87,14 @@ internal object DocentSeamCheck {
             )
         }
         // The provider reads the thread id off the SessionRef as localSessionId.value (263.5096 — before that,
-        // a direct `threadId`); a re-shape breaks thread bookkeeping inside the provider's catch-all.
+        // a direct `threadId`); a re-shape drops the session header inside the provider's catch-all.
         val sessionRef = AwbReflect.load(cl, SESSION_REF_FQN)
         if (sessionRef != null && AwbReflect.zeroArg(sessionRef, "getLocalSessionId") == null) {
-            add("SessionRef lost localSessionId (ACP threads can't be identified; docent MCP still contributed)")
-        }
-
-        val supplement = AwbReflect.load(cl, ACP_PROMPT_SUPPLEMENT_FQN)
-        if (supplement == null) {
-            add("AcpPromptSupplement moved or is gone (ACP threads won't receive the Docent protocol)")
-        } else if (supplement.methods.none { java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_PROMPT_SUPPLEMENT_METHOD }) {
-            add("AcpPromptSupplement.supplement changed signature (ACP threads won't receive the Docent protocol)")
+            add("SessionRef lost localSessionId (no session header on ACP threads; docent MCP still contributed)")
         }
 
         if (AwbReflect.load(cl, THREADS_STATE_STORE_FQN) == null) {
-            add("AgentThreadsStateStore moved or is gone (persisted thread listing and ACP agent lookup)")
+            add("AgentThreadsStateStore moved or is gone (persisted thread listing)")
         }
 
         val vfile = AwbReflect.load(cl, AwbNames.CHAT_VFILE_FQN)
@@ -185,14 +178,12 @@ internal object DocentSeamCheck {
     private const val WORKSPACE_IDS_FQN = "com.intellij.air.backend.session.api.SessionWorkspaceIdsKt"
     private const val WORKSPACE_ID_FROM_PATH = "sessionWorkspaceIdFromBackendPath"
 
-    /** The ACP EP interfaces [DocentAcpMcpServerProvider] / [DocentAcpPromptSupplement] implement (not value-class
-     *  mangled: `SessionRef` / `AcpAgentId` are ordinary types). */
+    /** The ACP EP interface [DocentAcpMcpServerProvider] implements (not value-class mangled: `SessionRef` /
+     *  `AcpAgentId` are ordinary types). */
     private const val ACP_MCP_PROVIDER_FQN = "com.intellij.air.acp.AcpMcpServerProvider"
     private const val ACP_MCP_PROVIDER_METHOD = "getMcpServers"
     /** 263.5712: (projectDir, sessionScope, sessionRef, agentId, mcpCapabilities) + the suspend Continuation. */
     private const val ACP_MCP_PROVIDER_ARITY = 6
-    private const val ACP_PROMPT_SUPPLEMENT_FQN = "com.intellij.air.acp.runtime.AcpPromptSupplement"
-    private const val ACP_PROMPT_SUPPLEMENT_METHOD = "supplement"
 
     /** The ACP session handle passed to the MCP provider; the thread id hides in its localSessionId. */
     private const val SESSION_REF_FQN = "com.intellij.air.backend.session.api.SessionRef"

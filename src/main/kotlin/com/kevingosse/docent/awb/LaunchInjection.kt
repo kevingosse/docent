@@ -2,7 +2,6 @@ package com.kevingosse.docent.awb
 
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
-import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.deliveryModeForProvider
 import com.kevingosse.docent.mcp.DocentMcpEndpoint
@@ -40,43 +39,10 @@ internal object LaunchInjection {
     internal data class DocentMcpTarget(val url: String, val headerName: String?, val headerValue: String?)
 
     /**
-     * Merge the Docent protocol (with this session's [threadId] baked in as its sessionToken, when known)
-     * into the Claude CLI's `--append-system-prompt`.
-     *
-     * The flag is **last-wins, not appended** (empirically, Claude Code 2.1.183: a second occurrence
-     * clobbers the first). So when one is already present we MERGE into its value rather than add a second
-     * flag (preserving any user- or other-contributor-supplied prompt). Otherwise we insert the flag+value
-     * before the prompt separator (the bare double-dash token) — tokens after it are treated as prompt text,
-     * and inserting before it is correct regardless of contributor ordering vs the descriptor that appends
-     * the prompt. With no separator, append at the end.
-     */
-    fun injectClaudeSystemPrompt(command: List<String>, threadId: String?): List<String> {
-        val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.MONITOR, threadId))
-        val flag = "--append-system-prompt"
-        val i = command.indexOf(flag)
-        if (i >= 0 && i + 1 < command.size) {
-            val merged = command.toMutableList()
-            // Join with a space, NOT a newline: the terminal truncates the arg at its first newline (see singleLine).
-            merged[i + 1] = command[i + 1] + "  " + protocol
-            return merged
-        }
-
-        val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
-        val result = command.toMutableList()
-        result.addAll(insertAt, listOf(flag, protocol))
-        return result
-    }
-
-    /**
-     * Inject the Codex equivalents of Claude's launch knobs. `-c` config overrides, inserted before the `--`
+     * Inject the Codex equivalent of Claude's `--mcp-config`. `-c` config overrides, inserted before the `--`
      * prompt separator (tokens after `--` are the initial message):
-     *  - `developer_instructions=<await protocol>` — the ambient-instruction analog of `--append-system-prompt`.
-     *    The value is a raw multi-line string; Codex parses a `-c` value as TOML and falls back to the literal
-     *    when that fails, so the protocol text passes through verbatim (no quoting needed). We always set our
-     *    own (the workbench injects none), so there's nothing to merge.
-     *  - `mcp_servers.$DOCENT_MCP_NAME.url=<endpoint URL>` (+ `.http_headers.<auth header>` when [mcp] is
-     *    the authenticated docent-only endpoint) — Codex's analog of Claude's injected `--mcp-config`: a
-     *    dotted `-c` path CREATES the server entry, so the `docent_*` tools are visible with zero user
+     *  - `mcp_servers.$DOCENT_MCP_NAME.url=<endpoint URL>` plus one `.http_headers.<name>` per [mcpHeaders] entry —
+     *    a dotted `-c` path CREATES the server entry, so the `docent_*` tools are visible with zero user
      *    config, additively to whatever `~/.codex/config.toml` already registers.
      *  - `tool_timeout_sec=<CODEX_TOOL_TIMEOUT_SEC>` on our own [DOCENT_MCP_NAME] entry — lifts the 60s
      *    default that would otherwise kill a blocking docent_await_event.
@@ -87,22 +53,17 @@ internal object LaunchInjection {
      * workbench spawns that app-server itself, with no contributor hook, so the server side can never
      * match. Flag position (before/after the `resume` token) doesn't help; server-side or symmetric
      * config works, client-only freezes. Until Codex fixes the handshake, a resumed tab without docent
-     * tools beats a frozen one. `developer_instructions` is proven harmless and stays.
+     * tools beats a frozen one.
      */
     fun injectCodexConfig(command: List<String>, threadId: String?, mcp: DocentMcpTarget?): List<String> {
-        val protocol = singleLine(DocentProtocolPrompt.forDelivery(DeliveryMode.AWAIT, threadId))
-        val extra = mutableListOf(
-            "-c", "developer_instructions=$protocol",
-        )
         val isRemoteResume = command.contains("resume") && command.contains("--remote")
-        if (mcp != null && !isRemoteResume) {
-            extra += listOf(
-                "-c", "mcp_servers.$DOCENT_MCP_NAME.url=${mcp.url}",
-                "-c", "mcp_servers.$DOCENT_MCP_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
-            )
-            if (mcp.headerName != null) {
-                extra += listOf("-c", "mcp_servers.$DOCENT_MCP_NAME.http_headers.${mcp.headerName}=${mcp.headerValue}")
-            }
+        if (mcp == null || isRemoteResume) return command
+        val extra = mutableListOf(
+            "-c", "mcp_servers.$DOCENT_MCP_NAME.url=${mcp.url}",
+            "-c", "mcp_servers.$DOCENT_MCP_NAME.tool_timeout_sec=$CODEX_TOOL_TIMEOUT_SEC",
+        )
+        mcpHeaders(threadId, mcp).forEach { (name, value) ->
+            extra += listOf("-c", "mcp_servers.$DOCENT_MCP_NAME.http_headers.$name=$value")
         }
         val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
         return command.toMutableList().apply { addAll(insertAt, extra) }
@@ -118,26 +79,22 @@ internal object LaunchInjection {
      * active and already points at this IDE; a second config would be ignored-or-merged unpredictably under
      * strict semantics).
      */
-    fun injectDocentMcpConfig(command: List<String>, mcp: DocentMcpTarget?): List<String> {
+    fun injectDocentMcpConfig(command: List<String>, threadId: String?, mcp: DocentMcpTarget?): List<String> {
         if (mcp == null || command.contains("--strict-mcp-config")) return command
-        val headers = mcp.headerName?.let { ""","headers":{"$it":"${mcp.headerValue}"}""" } ?: ""
-        val json = """{"mcpServers":{"$DOCENT_MCP_NAME":{"type":"http","url":"${mcp.url}"$headers}}}"""
+        val headers = mcpHeaders(threadId, mcp)
+        val headersJson = if (headers.isEmpty()) "" else
+            headers.joinToString(",", prefix = ",\"headers\":{", postfix = "}") { (name, value) -> "\"$name\":\"$value\"" }
+        val json = """{"mcpServers":{"$DOCENT_MCP_NAME":{"type":"http","url":"${mcp.url}"$headersJson}}}"""
         val insertAt = command.indexOf("--").let { if (it >= 0) it else command.size }
         return command.toMutableList().apply { addAll(insertAt, listOf("--mcp-config", json)) }
     }
 
-    /**
-     * Collapse a protocol string to a single physical line for command-line injection.
-     *
-     * The workbench launches agents through the reworked terminal in NON_SHELL mode, which **truncates a
-     * command-line argument at its first newline** on Windows — VERIFIED against a real Codex session
-     * rollout: a multi-line `developer_instructions` value arrived cut at line 1, dropping the entire
-     * protocol after the first sentence (the same hazard applies to Claude's `--append-system-prompt`). So
-     * any instruction baked onto the command line MUST be one line. The protocol is plain prose/bullets, so
-     * joining its lines with spaces reads fine as a single paragraph.
-     */
-    fun singleLine(s: String): String =
-        s.lines().joinToString(" ") { it.trim() }.replace(Regex(" {2,}"), " ").trim()
+    /** The headers of an injected `docent` MCP entry: the endpoint's auth header (none on the public-server
+     *  fallback), then the session header carrying [threadId], so the IDE knows which session calls a tool. */
+    fun mcpHeaders(threadId: String?, mcp: DocentMcpTarget): List<Pair<String, String>> = buildList {
+        if (mcp.headerName != null) add(mcp.headerName to (mcp.headerValue ?: ""))
+        if (!threadId.isNullOrBlank()) add(DocentMcpEndpoint.SESSION_HEADER to threadId)
+    }
 
     /**
      * This session's workbench thread id: the [sessionId] param, else the spec's [preallocatedId], else the
@@ -183,7 +140,7 @@ internal object LaunchInjection {
     /**
      * Install a [DocentEventNotifier] for the project and record the project path, so the review can PUSH
      * events into the driving agent's thread instead of making it long-poll. The thread itself is identified
-     * per-session via the sessionToken the agent echoes; we only set project-scoped state here (the same for
+     * per-session by the session header on the agent's tool calls; we only set project-scoped state here (the same for
      * every session in the project, so it's safe for background launches to re-set it). Best-effort: failure
      * just means the review falls back to the (working but token-heavy) poll path.
      *
@@ -198,7 +155,7 @@ internal object LaunchInjection {
         val service = DocentReviewService.getInstance(project)
         // Provider-scoped (not session-scoped) state. In practice one agent kind drives a review at a time, so the
         // last launch's provider is the right one when its session then arms the review; the precise per-session
-        // target is the sessionToken the agent echoes. The UI "Connect agent…" path overrides these authoritatively.
+        // target comes from the session header on the tool call that opens the review. The UI "Connect agent…" path overrides these authoritatively.
         service.agentProvider = providerValue
         service.deliveryMode = deliveryModeForProvider(providerValue) // Claude → MONITOR (watch), Codex → AWAIT (block)
         service.agentProjectPath = projectPath

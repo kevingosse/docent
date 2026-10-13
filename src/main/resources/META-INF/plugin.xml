@@ -17,8 +17,8 @@
          workbench-launched coding agent can call them. The core plugin loads fine without it. -->
     <depends optional="true" config-file="docent-mcp.xml">com.intellij.mcpServer</depends>
     <!-- Optional: when Air (formerly the Agent Workbench) is installed, install the Docent's workbench seams
-         (session directory for "Connect agent…", the push notifier) and inject the Docent protocol + MCP entry
-         into every agent it launches — on the Terminal surface via CLI args, on the ACP surface via Air's ACP
+         (session directory for "Connect agent…", the push notifier) and add the docent MCP entry
+         to every agent it launches — on the Terminal surface via CLI args, on the ACP surface via Air's ACP
          EPs. Air's plugin id became `com.intellij.air` on 2026-07-28 (263.x, bundled in the IDE); the old
          `com.intellij.agent.workbench` id has no alias, so this MUST name the new id or the seam never loads. -->
     <depends optional="true" config-file="docent-awb.xml">com.intellij.air</depends>

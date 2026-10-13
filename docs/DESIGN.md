@@ -174,8 +174,8 @@ proves itself and gets folded into the workbench or it dies — so depending on 
   fork. We ship this as an **optional module** gated on `com.intellij.mcpServer`, so the core plugin
   stays platform-clean.
 - **Review creation (MCP).** `docent_change_summary(...)` and `docent_create_review(...)`, which the
-  agent calls once, when the user asks for a code review (§7). The instruction to use them is injected
-  *transparently* at launch, so the human only has to ask for the review.
+  agent calls once, when the user asks for a code review (§7). The Docent injects only the MCP entry at
+  launch, no instructions: the tool descriptions say when to call them, so the human only has to ask.
 - **Caller identity.** Inside a tool, `mcpCallInfo` exposes `clientInfo`, a `sessionId`, a custom
   `localAgentId`, and request headers — so a tool call can be mapped back to the exact workbench
   session that made it (especially via a `localAgentId`/env we set at launch).

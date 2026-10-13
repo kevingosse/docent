@@ -87,6 +87,14 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-09-25, 0.9.1 (branch `docent-oneshot`):** no more injected instructions. The Docent protocol
+> (Claude `--append-system-prompt`, Codex `-c developer_instructions`, the ACP first-turn supplement) only
+> made sense for live decision recording. The tool descriptions now carry the "call when the user asks for a
+> code review" rule on their own. The Air thread id, which the protocol handed to the agent as a
+> `sessionToken`, now travels in an `X-Docent-Session` header on each session's `docent` MCP entry; the tools
+> read it from `mcpCallInfo.headers` and no longer take a `sessionToken` parameter. Deleted:
+> `DocentProtocolPrompt`, `DocentAcpPromptSupplement`, `AcpIntroducedThreads`. Built, not click-tested.
+
 > **2026-09-25, 0.9.0 (branch `docent-oneshot`):** decision recording is gone. The agent creates the
 > review in one shot when the user asks (`docent_change_summary` → `docent_create_review`, which replaces
 > `docent_finalize_trail`). Deleted: `DecisionLog`, `docent_record_decision`, `docent_list_decisions`, the per-session decision
@@ -154,8 +162,7 @@ Both halves of the loop, all verified live:
   loop) and from the UI (**Connect agent…** lists live workbench sessions with honest reachability
   and links the loaded trail to one).
 - **Providers: Claude + Codex, both live-verified.** The connect/launch path is
-  provider-parameterized (`awb/DocentLaunchContributor`). Codex gets the protocol via
-  `-c developer_instructions`, has its 60s MCP timeout lifted via
+  provider-parameterized (`awb/DocentLaunchContributor`). Codex has its 60s MCP timeout lifted via
   `-c mcp_servers.<name>.tool_timeout_sec=3600`, and uses AWAIT delivery.
 - **UI (0.3.x redesign, per `docs/UI.md`)** — shared visual kit (`ui/DocentUi.kt`: one palette with
   a reserved critic color, single markup renderer, cards/chips, segmented progress, live-width
