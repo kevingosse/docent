@@ -3,7 +3,10 @@ package com.kevingosse.docent.awb
 import com.agentclientprotocol.model.HttpHeader
 import com.agentclientprotocol.model.McpCapabilities
 import com.agentclientprotocol.model.McpServer
+import com.intellij.air.acp.AcpMcpServerContribution
 import com.intellij.air.acp.AcpMcpServerProvider
+import com.intellij.air.acp.AcpMcpServerToolsReader
+import com.intellij.air.acp.AcpMcpToolInfo
 import com.intellij.air.acp.api.AcpAgentId
 import com.intellij.air.backend.session.api.SessionRef
 import com.intellij.air.backend.session.launch.McpStreamUrlProvider
@@ -36,7 +39,7 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
         sessionRef: SessionRef,
         agentId: AcpAgentId,
         mcpCapabilities: McpCapabilities,
-    ): List<McpServer> {
+    ): List<AcpMcpServerContribution> {
         return try {
             val provider = AcpInjection.providerForAcpAgent(agentId.rawId) ?: return emptyList()
             // 263.5712: Air now passes the agent's advertised MCP transports. The Docent endpoint is HTTP-only, so
@@ -52,7 +55,9 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
             val mcp = LaunchInjection.resolveDocentMcp { McpStreamUrlProvider.resolve() } ?: return emptyList()
             LOG.info("Docent: ACP $provider session (thread=$threadId) — contributing the '${AcpInjection.DOCENT_MCP_NAME}' MCP server")
             val headers = LaunchInjection.mcpHeaders(threadId, mcp).map { (name, value) -> HttpHeader(name, value) }
-            listOf(McpServer.Http(AcpInjection.DOCENT_MCP_NAME, mcp.url, headers))
+            // 263.6460: a provider returns each server with a tools reader. Only Air's MCP debug view reads the
+            // tools, so the Docent reports none.
+            listOf(AcpMcpServerContribution(McpServer.Http(AcpInjection.DOCENT_MCP_NAME, mcp.url, headers), NO_TOOLS))
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t
             LOG.warn("Docent: failed to contribute the docent MCP server to an ACP session; the agent launches without it", t)
@@ -62,5 +67,9 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
 
     private companion object {
         private val LOG = logger<DocentAcpMcpServerProvider>()
+
+        private val NO_TOOLS = object : AcpMcpServerToolsReader {
+            override suspend fun read(): List<AcpMcpToolInfo> = emptyList()
+        }
     }
 }
