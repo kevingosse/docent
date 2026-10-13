@@ -67,7 +67,8 @@ internal class WorkbenchSessionDirectory(private val project: Project) : AgentSe
                 runCatching {
                     val agentId = vf.agentId?.value ?: return@runCatching
                     if (agentId !in SUPPORTED_PROVIDER_VALUES) return@runCatching
-                    if (!samePath(vf.projectPath, base)) return@runCatching
+                    // 263.7029 dropped AgentThreadViewVirtualFile.projectPath; projectDirectory is the same directory.
+                    if (!samePath(vf.projectDirectory, base)) return@runCatching
                     val id = vf.threadId?.takeIf { it.isNotBlank() } ?: return@runCatching
                     if (!seen.add(id)) return@runCatching
                     val title = vf.threadTitle?.takeIf { it.isNotBlank() }

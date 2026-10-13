@@ -119,30 +119,24 @@ internal object DocentSeamCheck {
             }
         }
 
-        // The live-terminal registry [AwbTerminalTab] queries (263.5096+: replaces the old walk over the file
-        // editor's private content fields).
-        val registry = AwbReflect.load(cl, AwbNames.TERMINAL_REGISTRY_SERVICE_FQN)
-        if (registry == null) {
+        // The live-terminal owner [AwbTerminalTab] queries (263.7029+: an app service keyed by the vfile's
+        // localSessionIdentity; replaces the per-project registry service keyed by tabKey).
+        val manager = AwbReflect.load(cl, AwbNames.TERMINAL_RUNTIME_MANAGER_FQN)
+        if (manager == null) {
             add(
-                "AgentThreadViewLiveTerminalRegistryService moved or is gone " +
+                "AgentTerminalRuntimeManager moved or is gone " +
                     "(can't reach the live terminal; events fall back to the launch client)",
             )
         } else {
-            val currentEntry = registry.methods.firstOrNull {
-                it.name.startsWith(AwbNames.TERMINAL_REGISTRY_ENTRY_METHOD_PREFIX) &&
-                    it.parameterCount == 1 && it.parameterTypes[0] == String::class.java
-            }
-            if (currentEntry == null) {
+            val runtime = manager.methods.firstOrNull { it.name == "runtime" && it.parameterCount == 1 }
+            if (runtime == null) {
                 add(
-                    "AgentThreadViewLiveTerminalRegistryService lost currentEntry(tabKey) " +
+                    "AgentTerminalRuntimeManager lost runtime(sessionIdentity) " +
                         "(can't reach the live terminal; events fall back to the launch client)",
                 )
-            } else if (currentEntry.returnType.methods.none {
-                    it.name == AwbNames.TERMINAL_ENTRY_TAB_GETTER && it.parameterCount == 0
-                }
-            ) {
+            } else if (runtime.returnType.methods.none { it.name == "getTab" && it.parameterCount == 0 }) {
                 add(
-                    "AgentThreadViewLiveTerminalEntry lost its tab accessor " +
+                    "AgentTerminalRuntime lost its tab accessor " +
                         "(can't reach the live terminal; events fall back to the launch client)",
                 )
             }

@@ -16,21 +16,13 @@ internal object AwbNames {
     const val CHAT_VFILE_FQN = "com.intellij.air.thread.view.AgentThreadViewVirtualFile"
 
     /** The terminal-tab type carrying `sendText(text, shouldExecute, useBracketedPasteMode)`.
-     *  Pre-layering: `com.intellij.air.thread.tui.frontend.AgentThreadViewTerminalTab`. */
-    const val TERMINAL_TAB_FQN = "com.intellij.air.frontend.session.view.tui.AgentThreadViewTerminalTab"
+     *  263.5096–263.6460: `com.intellij.air.frontend.session.view.tui`; pre-layering: `com.intellij.air.thread.tui.frontend`. */
+    const val TERMINAL_TAB_FQN = "com.intellij.air.frontend.session.terminal.AgentThreadViewTerminalTab"
 
-    /** The project service that owns every live terminal, keyed by the thread vfile's `tabKey` (263.5096 —
-     *  before that, the tab hung off the file editor's private content fields). Kotlin-`internal`, hence
-     *  reached by FQN — see [AwbTerminalTab]. */
-    const val TERMINAL_REGISTRY_SERVICE_FQN =
-        "com.intellij.air.frontend.session.view.tui.AgentThreadViewLiveTerminalRegistryService"
-
-    /** The registry method returning the live entry for a tab key. Kotlin-`internal`, so the JVM name carries
-     *  a module suffix (`currentEntry$intellij_air_frontend_session_view_tui` today) — matched by prefix. */
-    const val TERMINAL_REGISTRY_ENTRY_METHOD_PREFIX = "currentEntry"
-
-    /** The entry's tab accessor (`AgentThreadViewLiveTerminalEntry.getTab()`). */
-    const val TERMINAL_ENTRY_TAB_GETTER = "getTab"
+    /** The app service that owns every live terminal, keyed by the thread vfile's `localSessionIdentity`
+     *  (263.7029; before that a per-project `AgentThreadViewLiveTerminalRegistryService` keyed by `tabKey`).
+     *  Referenced statically by [AwbTerminalTab]; the FQN is kept for [DocentSeamCheck]'s probe. */
+    const val TERMINAL_RUNTIME_MANAGER_FQN = "com.intellij.air.frontend.session.terminal.AgentTerminalRuntimeManager"
 
     /** Agent ids (`AgentId.value`) the Docent can drive. */
     const val PROVIDER_CLAUDE = "claude"

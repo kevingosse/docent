@@ -87,6 +87,19 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-10-13, 0.9.4:** rebuilt against IU-263.7029. Air moved the terminal tab to
+> `com.intellij.air.frontend.session.terminal` and replaced the per-project live-terminal registry with the
+> app service `AgentTerminalRuntimeManager` (keyed by the vfile's `localSessionIdentity`); `AwbTerminalTab` now
+> calls it statically and `DocentSeamCheck` probes it. `AgentThreadViewVirtualFile.projectPath` is gone; the
+> session directory uses `projectDirectory`. Built, not click-tested.
+
+> **2026-10-01, 0.9.3:** rebuilt against IU-263.6460 (fixes the `NoSuchMethodError` on
+> `AgentThreadLaunchSpec.copy` in Claude terminal launches; no source change needed there).
+> `AcpMcpServerProvider.getMcpServers` now returns `AcpMcpServerContribution`s; the docent server reports no tools.
+
+> **Note:** 0.9.0–0.9.3 were recommitted on `main` on 2026-10-13 from session transcripts after the
+> 2026-10-07 disk wipe (they were originally on the unpushed `docent-oneshot` branch).
+
 > **2026-09-25, 0.9.2 (branch `docent-oneshot`):** Air 263.5983 adds Code Notes, which shows its own gutter
 > "+" on every hovered line of every diff. It does not remove our caret-line "+", but the two are easy to
 > confuse. New entry point: **Add Docent Comment** in the diff editor's context menu (`Docent.AddComment`,

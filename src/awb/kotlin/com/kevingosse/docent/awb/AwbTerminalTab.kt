@@ -1,7 +1,9 @@
 package com.kevingosse.docent.awb
 
-import com.intellij.air.frontend.session.view.tui.AgentThreadViewTerminalTab
+import com.intellij.air.frontend.session.terminal.AgentTerminalRuntimeManager
+import com.intellij.air.frontend.session.terminal.AgentThreadViewTerminalTab
 import com.intellij.air.thread.view.AgentThreadViewVirtualFile
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 
 /**
@@ -9,27 +11,19 @@ import com.intellij.openapi.project.Project
  * an event into the running agent) and by [WorkbenchSessionDirectory] (to tell a reachable thread from a
  * merely-persisted one).
  *
- * Since Air 263.5096 the tab no longer hangs off the file editor's private content fields (the old bounded
- * field walk); every live terminal is owned by a per-project registry service
- * ([AwbNames.TERMINAL_REGISTRY_SERVICE_FQN]), keyed by the thread vfile's `tabKey`. The lookup is
- * `registry.currentEntry(vf.tabKey)?.tab`. The service class and its `currentEntry` are Kotlin-`internal`
- * (the method's JVM name carries a module suffix), so both are reached reflectively — the method by name
- * prefix, which absorbs a module rename; a *type* rename is reported by [DocentSeamCheck]. An ACP (GUI)
- * thread simply has no live terminal — that's a null, not a failure.
+ * Since Air 263.7029 every live terminal is owned by the app-level [AgentTerminalRuntimeManager], keyed by the
+ * thread vfile's `localSessionIdentity` (263.5096–263.6460: a per-project `AgentThreadViewLiveTerminalRegistryService`
+ * keyed by `tabKey`, reached reflectively). The manager and its `runtime(...)` / `runtimesOf(...)` are public, so
+ * the lookup is static. An ACP (GUI) thread simply has no live terminal — that's a null, not a failure.
  */
 internal object AwbTerminalTab {
 
     /** [vf]'s live terminal tab in [project], or null when the thread has no live terminal. */
     fun find(project: Project, vf: AgentThreadViewVirtualFile): AgentThreadViewTerminalTab? = runCatching {
-        val registryClass = Class.forName(AwbNames.TERMINAL_REGISTRY_SERVICE_FQN, false, javaClass.classLoader)
-        val registry = project.getService(registryClass) ?: return null
-        val currentEntry = registryClass.methods.firstOrNull {
-            it.name.startsWith(AwbNames.TERMINAL_REGISTRY_ENTRY_METHOD_PREFIX) &&
-                it.parameterCount == 1 && it.parameterTypes[0] == String::class.java
-        } ?: return null
-        val entry = currentEntry.invoke(registry, vf.tabKey) ?: return null
-        entry.javaClass.methods
-            .firstOrNull { it.name == AwbNames.TERMINAL_ENTRY_TAB_GETTER && it.parameterCount == 0 }
-            ?.invoke(entry) as? AgentThreadViewTerminalTab
+        val manager = ApplicationManager.getApplication().getServiceIfCreated(AgentTerminalRuntimeManager::class.java)
+            ?: return null
+        val runtime = vf.localSessionIdentity?.let { manager.runtime(it) }
+            ?: manager.runtimesOf(project).firstOrNull { it.file === vf }
+        runtime?.tab
     }.getOrNull()
 }
