@@ -7,10 +7,9 @@ As developers delegate more implementation to AI agents, the bottleneck shifts f
 ## How a review works
 
 1. **You ask an agent for a code review** (Claude Code or Codex, in a session opened in the IDE's Agent Workbench): "let's start a code review". The agent composes the walkthrough in one go and opens it. You can also ask from the **Code Review Docent** tool window (left sidebar), which lists the live sessions.
-2. **Either seat works.** The session that made the change tells the story from what it knows. A session reviewing someone else's branch infers the reasons from the diff and commits, and the review says so at the top.
-3. **The Docent walks you through it.** Sections in a plan rail, narration above a real diff viewer, inline comments on the exact lines they're about. Everything is your IDE: Ctrl-click, find-usages, side-by-side or unified diff.
-4. **You drive.** Ask questions in any section — the agent answers from its knowledge of the change, and says when a reason is a guess. Ask for changes — they're queued, not applied, while you keep reviewing.
-5. **Complete the review.** The queued change requests are dispatched to the agent, which implements them. Ask for a new review to walk through the follow-up delta.
+2. **The Docent walks you through it.** Sections in a plan rail, narration above a real diff viewer, inline comments on the exact lines they're about. Everything is your IDE: Ctrl-click, find-usages, side-by-side or unified diff.
+3. **You drive.** Ask questions in any section — the agent answers from its first-hand knowledge of the change. Ask for changes — they're queued, not applied, while you keep reviewing.
+4. **Complete the review.** The queued change requests are dispatched to the agent, which implements them. Ask for a new review to walk through the follow-up delta.
 
 Nothing is hidden: every changed file appears in some section (an auto-synthesized "Other changes" section catches the remainder), so you stay in touch with the whole change.
 

@@ -5,7 +5,6 @@ import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.EventLog
 import com.kevingosse.docent.ReviewEvent
-import com.kevingosse.docent.ui.DocentReviewController
 
 /**
  * Renders a [ReviewEvent] as the prompt text the connected agent receives as a new user turn. Extracted from
@@ -32,9 +31,8 @@ internal object EventPrompt {
                         "(limit 50): ${DocentProtocolPrompt.TOOL_QUERY}",
                 )
                 appendLine(
-                    "Then call docent_change_summary (it returns the changed files, exact line ranges, the " +
-                        "commits, the Trail JSON schema AND the rules for choosing source=\"session\" or " +
-                        "\"inferred\"). Compose the Trail with those field names and call docent_create_review " +
+                    "Then call docent_change_summary (it returns the changed files, exact line ranges AND the " +
+                        "Trail JSON schema). Compose the Trail with those field names and call docent_create_review " +
                         "to write it and open the review — pass your sessionToken so the review routes back to " +
                         "THIS session. If it returns a validation error, fix exactly the named field and call it again.",
                 )
@@ -92,12 +90,8 @@ internal object EventPrompt {
                 if (event.context.isNotBlank()) appendLine("> ${event.context}")
                 appendLine("\"${event.text}\"")
                 appendLine()
-                // An inferred Trail was written by an agent that didn't make the change, so it has no first-hand WHY.
-                val inferred = DocentReviewController.getInstance(project).trail?.isInferred() == true
                 appendLine(
-                    (if (inferred) "Answer from the trail, the code and the commits, and say plainly when a reason is " +
-                        "your guess, by calling "
-                    else "Answer from your first-hand knowledge of WHY (not a restatement of the diff) by calling ") +
+                    "Answer from your first-hand knowledge of WHY (not a restatement of the diff) by calling " +
                         "docent_reply(eventId=\"${event.id}\", text=...). If they are requesting a change, also call " +
                         "docent_queue_change(...) and acknowledge it briefly (\"queued\") — do NOT edit files yet. " +
                         "Then end your turn; you'll be messaged again when the reviewer next acts.",

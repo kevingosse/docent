@@ -211,27 +211,16 @@ happens is **a leading hypothesis to validate when building, not a locked decisi
 
 ## 7. The Trail (artifact)
 
-### One-shot creation, two seats
+### One-shot creation
 The agent writes the whole Trail at once, when the user asks for a code review. It reads the changed
-files and commits (`docent_change_summary`), composes the Trail, and opens the review
-(`docent_create_review`). Each Trail records where its *why* comes from (`source`):
-
-- **`session` (author seat).** The session that made the change writes the Trail from its own
-  history: the choices between alternatives, the constraints hit, the assumptions made, the surprises,
-  the verifications.
-- **`inferred` (reviewer seat).** A session reviewing someone else's change has only the diff, the
-  commits and the code. It guesses the reasons, words them as guesses, and names the questions it
-  could not answer. The review says so at the top, and replies stay hedged. Nothing is stored outside
-  the reviewer's machine.
+files (`docent_change_summary`), composes the Trail from its own history of the change (the choices
+between alternatives, the constraints hit, the assumptions made, the surprises, the verifications),
+and opens the review (`docent_create_review`).
 
 *Superseded (0.1–0.8): "trace during, synthesize after".* The agent recorded decisions live while
 coding and synthesized the Trail from that log. It was built for all-in-IDE development. In the current
 workflow the agent has no Docent tools until the session moves into the IDE, and live recording was
 never shown to improve Trail quality, so 0.9.0 dropped it.
-
-*Later: author-side publishing.* The author reviews their own AI change with a `session` Trail and
-publishes the Trail with the change, so the peer reviewer gets the real reasons. Blocked on where the
-Trail is stored.
 
 ### Structure
 A tree/DAG, not file order: *thesis → architectural moves → per-area detail → individual hunks.*
@@ -255,9 +244,8 @@ anchors survive later edits).
 ## 8. The Docent (the coding agent, as live guide)
 
 - **Live, not a static render.** Backed by an ACP agent that can act.
-- **The author itself, or an honest guesser.** In the author seat it knows the change first-hand, so
-  it answers *why* with knowledge, not speculation — and it owns the change, so it can act on requested
-  changes when the review completes. In the reviewer seat (§7) it says which reasons are guesses.
+- **The author itself.** It knows the change first-hand, so it answers *why* with knowledge, not
+  speculation — and it owns the change, so it can act on requested changes when the review completes.
 - **Presents, doesn't ask.** Voiced as a sharp senior colleague with opinions — restrained, not a
   quirky mascot (this is a tool opened many times a day).
 - **Verifies.** Establishes trust by acting on ground truth, not by asserting.

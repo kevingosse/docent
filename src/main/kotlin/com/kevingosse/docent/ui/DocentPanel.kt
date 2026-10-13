@@ -235,18 +235,6 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             alignmentX = Component.LEFT_ALIGNMENT
             border = JBUI.Borders.emptyTop(6)
         })
-        // An inferred Trail was written by an agent that didn't make the change: say so before the reader
-        // takes its reasons for the author's.
-        if (j.isInferred()) {
-            column.add(JBLabel(
-                "<html><div style='width:${contentWidth}px'>The reasons in this review are inferred from the diff " +
-                    "and commits. The author did not state them.</div></html>",
-                AllIcons.General.Information, JBLabel.LEADING,
-            ).apply {
-                alignmentX = Component.LEFT_ALIGNMENT
-                border = JBUI.Borders.emptyTop(10)
-            })
-        }
 
         // The thesis, at a readable measure.
         column.add(DocentUi.htmlPane(j.thesis, contentWidth).apply {

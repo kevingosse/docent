@@ -29,8 +29,7 @@ import kotlin.coroutines.coroutineContext
  *
  *  - **Creation (§7):** when the user asks for a code review, [docent_change_summary] returns the changed
  *    files and the Trail schema, the agent composes a Trail in one go, and [docent_create_review] writes it and
- *    opens the review. The agent either made the change (Trail source "session") or is reviewing someone
- *    else's change and guesses the reasons from the diff and commits (source "inferred").
+ *    opens the review.
  *  - **Review (perform, §6):** [docent_create_review] opens the review and arms the live loop. You do NOT
  *    poll: the IDE PUSHES each reviewer action into your session (see `awb/DocentEventNotifier`), and you respond
  *    with [docent_reply] and record requested changes with [docent_queue_change] (read-only — no edits until the
@@ -103,10 +102,7 @@ class DocentMcpToolset : McpToolset {
     suspend fun docent_reply(
         @McpDescription("The id from the docent_await_event envelope you are answering.")
         eventId: String,
-        @McpDescription(
-            "Your reply — the WHY, not a restatement of the diff. On an inferred review (you did not write the " +
-                "change), say when a reason is your guess."
-        )
+        @McpDescription("Your reply, in the author's voice — the WHY, not a restatement of the diff.")
         text: String,
     ): String {
         val project = coroutineContext.projectOrNull
@@ -210,15 +206,9 @@ class DocentMcpToolset : McpToolset {
 
         val logPath = service.eventLogPath
         val monitor = service.deliveryMode == DeliveryMode.MONITOR && logPath != null
-        val inferred = trail.isInferred()
         return buildString {
             appendLine("Opened the Docent review for \"${trail.subject}\" (${trail.sections.size} sections).")
-            if (inferred) {
-                appendLine("You are now the live Docent for a change you did NOT write: the reviewer sees that the")
-                appendLine("reasons in this trail are inferred from the diff and commits.")
-            } else {
-                appendLine("You are now the live Docent — the author of this change, walking the human through it.")
-            }
+            appendLine("You are now the live Docent — the author of this change, walking the human through it.")
             appendLine()
             if (monitor) {
                 appendLine("Watch this review's events with the Monitor tool (persistent: true), running EXACTLY this command:")
@@ -229,14 +219,8 @@ class DocentMcpToolset : McpToolset {
             } else {
                 appendLine("Drive the review by calling docent_await_event (it blocks until the reviewer acts). For each event:")
             }
-            if (inferred) {
-                appendLine("  - a reviewer question/comment: answer from the trail, the code and the commits via")
-                appendLine("    docent_reply(eventId, text) using the event id in the JSON. Say plainly when a reason is")
-                appendLine("    your guess, and check the code before you claim what it does. If they request a change,")
-            } else {
-                appendLine("  - a reviewer question/comment: answer from your first-hand knowledge of WHY (not a restatement")
-                appendLine("    of the diff) via docent_reply(eventId, text) using the event id in the JSON. If they request")
-            }
+            appendLine("  - a reviewer question/comment: answer from your first-hand knowledge of WHY (not a restatement")
+            appendLine("    of the diff) via docent_reply(eventId, text) using the event id in the JSON. If they request")
             appendLine("    a change, also call docent_queue_change(...) and acknowledge it briefly (\"queued\") — do NOT")
             appendLine("    edit files yet, and don't pre-describe the implementation.")
             appendLine("  - a \"review_completed\" event: the reviewer is done. NOW implement the queued changes")
@@ -268,12 +252,8 @@ class DocentMcpToolset : McpToolset {
         |message). It is the first of two calls: this one reads the ground truth, then docent_create_review
         |opens the review.
         |It returns the changed files (vs baseRef, including untracked new files, each with its exact
-        |`changedLineRanges`), the commits since baseRef, and `guidance`: the Trail JSON schema, the
-        |readability and granularity rules, and how to tell which seat you are in. Read `guidance` carefully
-        |before composing the Trail.
-        |baseRef: if YOU made the change in this session and it is uncommitted, HEAD. If you are reviewing a
-        |branch (someone else's, or already committed), the merge base with the target branch, e.g. the output
-        |of `git merge-base HEAD origin/main`.
+        |`changedLineRanges`) and `guidance`: the Trail JSON schema and the readability and granularity rules.
+        |Read `guidance` carefully before composing the Trail.
         """
     )
     suspend fun docent_change_summary(
@@ -302,23 +282,15 @@ class DocentMcpToolset : McpToolset {
             })
         }
         o.add("changedFiles", files)
-        o.add("commits", JsonArray().apply { GitChangeSet.commitsSince(base, ref).forEach { add(it) } })
         o.addProperty(
             "guidance",
             "Compose a Trail JSON: {subject, thesis(HTML), sections:[{headline, narration(HTML), " +
                 "anchors:[{path, ranges?:[{start,end}], label?, comments?:[{line, anchorText, body}]}]}]}. Line " +
                 "numbers (ranges start/end and comment line) are 1-based and end-INCLUSIVE, against the CURRENT " +
                 "working-tree file. " +
-                "SEAT — decide which one you are in, and pass it as `source` to docent_create_review: " +
-                "(a) source=\"session\": YOU made this change, in this session. Tell the story from what you know: " +
-                "the choices you made over real alternatives, the constraints you hit, the assumptions the code " +
-                "relies on, the surprises you found, what you verified. " +
-                "(b) source=\"inferred\": you are reviewing a change you did not make (someone else's branch, or " +
-                "work from a session you no longer remember). You do not know the reasons; infer them from the " +
-                "diff, the commit messages (read their full bodies with git log) and the surrounding code. " +
-                "Word every reason as a guess (\"likely because…\", \"this suggests…\"), and name the questions " +
-                "you could not answer — those are exactly what the reviewer should ask the author. Never present a " +
-                "guess as the author's intent. When in doubt, use \"inferred\". " +
+                "Tell the story from what you know about this change: the choices you made over real " +
+                "alternatives, the constraints you hit, the assumptions the code relies on, the surprises you " +
+                "found, what you verified. " +
                 "READABILITY — as important as the content itself: the reviewer READS this prose, so make it " +
                 "airy and scannable, never a wall of text. Break every narration (and the thesis) into SHORT " +
                 "paragraphs of 2–3 sentences, each wrapped in its own `<p>`…`</p>` — one idea per paragraph. Use " +
@@ -340,7 +312,7 @@ class DocentMcpToolset : McpToolset {
                 "the section narration. Never split one method or function across sections. Aim for a few coherent " +
                 "sections carried by rich inline comments, not many thin sections. " +
                 "Carry the non-reconstructable WHY — do NOT restate the diff. Anchor each section to files from " +
-                "changedFiles. Then submit with docent_create_review(trailJson, source, baseRef=\"$ref\", sessionToken).",
+                "changedFiles. Then submit with docent_create_review(trailJson, baseRef=\"$ref\", sessionToken).",
         )
         return o.toString()
     }
@@ -364,7 +336,7 @@ class DocentMcpToolset : McpToolset {
         |                                    "body": str, "line": int?} ]? } ] } ] }
         |The code a comment points at goes in a section ANCHOR's `comments[]` (keyed by `path`), NOT a section-level
         |`comments`/`files`/`why`/`title`. If you skipped docent_change_summary, call it first for the changed-file
-        |list, exact line ranges, and the seat rules.
+        |list and exact line ranges.
         |Granularity reminder: sections = functional blocks understandable without the code; code-specific points
         |= inline comments. Never split one method across sections.
         """
@@ -373,12 +345,6 @@ class DocentMcpToolset : McpToolset {
     suspend fun docent_create_review(
         @McpDescription("The Trail, as a JSON object (see docent_change_summary's `guidance` for the schema).")
         trailJson: String,
-        @McpDescription(
-            "Where the WHY comes from: \"session\" if you made this change in this session and know its reasons; " +
-                "\"inferred\" if you are reviewing a change you did not make and guessed the reasons from the diff " +
-                "and commits. The reviewer sees this. When in doubt, \"inferred\"."
-        )
-        source: String,
         @McpDescription("The git ref the change is diffed against; use the same one you passed to docent_change_summary. Defaults to HEAD.")
         baseRef: String = "HEAD",
         @McpDescription(
@@ -389,11 +355,6 @@ class DocentMcpToolset : McpToolset {
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
         val projectDir = project.basePath ?: return "The project has no base path on disk."
-        val seat = source.trim().lowercase()
-        if (seat != Trail.SOURCE_SESSION && seat != Trail.SOURCE_INFERRED) {
-            return "source must be \"session\" (you made this change and know why) or \"inferred\" (you guessed the " +
-                "reasons from the diff and commits). Got: \"$source\"."
-        }
         // Anchor paths / line lookups are git-root-relative; the Trail file, however, lives under the *project's*
         // .idea (that's where the review loads it from), which may sit below the git root in a monorepo checkout.
         val base = GitChangeSet.repoRoot(projectDir)
@@ -409,7 +370,7 @@ class DocentMcpToolset : McpToolset {
         val warnings = mutableListOf<String>()
         // Resolve each comment's anchorText to a real working-tree line (line-number accuracy, DESIGN §7) before
         // forcing the base, so the stored Trail carries correct 1-based lines regardless of what the agent guessed.
-        val trail = resolveAnchors(base, ref, parsed.copy(baseRef = ref, commit = null, source = seat), warnings)
+        val trail = resolveAnchors(base, ref, parsed.copy(baseRef = ref, commit = null), warnings)
 
         // Audit against ground truth (DESIGN §7): every anchor should sit on a file the change actually touched.
         val changed = GitChangeSet.workingTree(base, ref).map { it.path }.toSet()

@@ -24,8 +24,7 @@ internal object DocentProtocolPrompt {
         "docent_change_summary docent_create_review docent_await_event docent_reply docent_queue_change docent_resume_review"
 
     /**
-     * Create + resume intro — delivery-agnostic. The agent may have made the change itself, or may be reviewing
-     * someone else's change; the text covers both.
+     * Create + resume intro — delivery-agnostic.
      */
     private val INTRO: String = """
         This JetBrains IDE has the Code Review Docent installed. It walks a human reviewer through a code change,
@@ -37,17 +36,12 @@ internal object DocentProtocolPrompt {
                $TOOL_QUERY
              The IDE exposes these tools lazily through tool search, so they are NOT in your initial tool list —
              their absence does NOT mean they're unavailable.
-          2. Call docent_change_summary. It returns the changed files, exact line ranges, the commits, the Trail
-             JSON schema, and the rules for the two seats: source="session" if YOU made this change in this
-             session, source="inferred" if you are reviewing a change you did not make (then the reasons are
-             your guesses from the diff and commits, and the Trail must say so).
+          2. Call docent_change_summary. It returns the changed files, exact line ranges and the Trail JSON
+             schema.
           3. Compose the whole Trail strictly with the field names it gives, and call docent_create_review to
              write it and open the review. If it returns a validation error, fix exactly the named field and
              call it again.
         Never open a review on your own — finishing a change is not a trigger.
-
-        While a review runs, answer on an inferred review from the trail, the code and the commits, and say
-        plainly when a reason is your guess. On a session review, answer from your first-hand knowledge.
 
         To pick up a review you started earlier but didn't finish (its Trail already exists on disk), call
         docent_resume_review — it reloads the Trail into the review UI and connects you as the Docent. Then read

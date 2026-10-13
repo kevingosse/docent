@@ -50,8 +50,8 @@ import javax.swing.Scrollable
  * sections and, under the current section, the files it touches. Selecting either drives the review tab in the
  * editor pane via [DocentReviewController] — this panel only writes selection and reflects it.
  *
- * With no trail loaded it becomes the **review launcher** (see [buildStartReviewState]): it asks a live session,
- * or a new one, to create a review. The usual path is simpler still: the user asks their agent in chat.
+ * With no trail loaded it becomes the **review launcher** (see [buildStartReviewState]): it asks a live session
+ * to create a review. The usual path is simpler still: the user asks their agent in chat.
  */
 class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Disposable, DocentReviewController.Listener {
 
@@ -257,8 +257,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /**
      * The no-trail surface — the review launcher. Nothing opens by itself (DESIGN: no review after every change).
-     * The reviewer picks a live session to ask for a review, or starts a new session that reviews the current
-     * branch from its diff and commits.
+     * The reviewer picks a live session to ask for a review.
      */
     private fun buildStartReviewState() {
         // A load error wins — the user explicitly tried to open a trail that didn't read.
@@ -275,8 +274,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val workbenchReady = directory != null && service.eventNotifier != null
 
         planList.add(messageLabel(completionNote ?:
-            "No review open.\n\nAsk your agent to start a code review: the session that made the change, or " +
-                "any session to review someone else's branch.",
+            "No review open.\n\nAsk the agent that made the change to start a code review.",
         ))
         awaitingStartFrom?.let { planList.add(messageLabel("⟳  Asked $it to prepare the review…")) }
 
@@ -291,8 +289,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             planList.add(sectionHeader("Ask a session to start the review"))
             sessions.forEach { planList.add(sessionRow(it)) }
         }
-        newSessionRows(label = "Start a new session to review this branch") { startFreshSessionWith(it) }
-            .forEach { planList.add(it) }
         planList.add(loadTrailLink())
     }
 
@@ -768,33 +764,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 awaitingStartFrom = cropTitle(picked.title.ifBlank { "the agent" })
             } else {
                 notice = "Couldn't message that session. Ask the agent in chat to start the code review."
-            }
-            refreshList()
-        }
-    }
-
-    /** Launch a fresh agent session ([option], a workbench launch profile) that reviews the current branch. The
-     *  new session didn't make the change, so it creates an inferred review from the diff and commits. */
-    private fun startFreshSessionWith(option: SessionLaunchOption) {
-        notice = null
-        val launcher = DocentReviewService.getInstance(project).sessionLauncher ?: run {
-            notice = "Agent Workbench isn't available. Start a session there, then it'll appear here to review."
-            refreshList()
-            return
-        }
-        val prompt = "Please start a Code Review Docent review of the change on the current branch. You did not " +
-            "make this change, so use source=\"inferred\". Find the docent tools with a tool search (limit 50): " +
-            "${com.kevingosse.docent.awb.DocentProtocolPrompt.TOOL_QUERY}. Call docent_change_summary with baseRef = " +
-            "the merge base of HEAD and the branch it targets (e.g. `git merge-base HEAD origin/main`; HEAD if " +
-            "the change is only uncommitted work), then compose the Trail and call docent_create_review."
-        notice = "Starting “${option.label}”…"
-        refreshList()
-        launcher.startSession(prompt, option) { launched ->
-            if (launched) {
-                notice = null
-                awaitingStartFrom = "“${option.label}”"
-            } else {
-                notice = "Couldn't start “${option.label}”. Start one from the Agent Workbench instead."
             }
             refreshList()
         }
