@@ -87,6 +87,13 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-09-25, 0.9.0 (branch `docent-oneshot`):** decision recording is gone. The agent creates the
+> review in one shot when the user asks (`docent_change_summary` → `docent_create_review`, which replaces
+> `docent_finalize_trail`), and each Trail records its `source`: `session` (author seat) or `inferred`
+> (reviewer seat — reasons guessed from the diff and commits, labeled on the trailhead, replies hedged).
+> Deleted: `DecisionLog`, `docent_record_decision`, `docent_list_decisions`, the per-session decision
+> counts in the no-trail panel. The review loop after creation is unchanged. Built, not click-tested.
+
 > **2026-09-15, 0.8.6:** resuming an ACP thread after an IDE restart re-sent the full Docent protocol on its
 > first turn, because "already introduced" was an in-memory set. Now persisted app-wide
 > (`AcpIntroducedThreads`, newest 1000 thread ids): only a thread's first turn ever gets the protocol; resumed
@@ -133,14 +140,13 @@ with a clickable hint to jump there.
 
 Both halves of the loop, all verified live:
 
-- **Capture side** — MCP tools (`docent_record_decision` / `docent_change_summary` /
-  `docent_finalize_trail`) let the coding agent author a Trail as it works, written to
-  `<repo>/.idea/docent/trail.json`. **On-demand review mode:** the agent keeps recording decisions
-  (tagged with its `sessionToken`) and never auto-finalizes; the user triggers the review — in
-  chat, or by clicking a live workbench session in the **nav rail's no-trail surface**, which lists
-  sessions with their pending-decision counts and live-refreshes as decisions land. The decision
-  log persists across IDE restarts (`<repo>/.idea/docent/decisions.json`) and spans the whole
-  iteration, so the Trail covers the final design, not each intermediate step.
+- **Creation side (0.9.0, one-shot)** — when the user asks for a code review, the agent calls
+  `docent_change_summary` then `docent_create_review`, which writes `<repo>/.idea/docent/trail.json`
+  and opens the review. The Trail's `source` is `session` (the agent made the change) or `inferred`
+  (it reviews someone else's change from the diff and commits; the trailhead says so). The user asks
+  in chat, or clicks a live session in the **nav rail's no-trail surface**, which also offers a new
+  session to review the current branch. *(0.9.0 built, not click-tested; the recording-based capture
+  it replaced was.)*
 - **Review side** — the live **Docent** talks to the UI through `McpLoopBackend`: the workbench
   agent reached through the in-IDE MCP server. Conversation and inline-comment affordances are
   gated on a connected agent. IDE→agent delivery is a per-review NDJSON **`EventLog`** file the

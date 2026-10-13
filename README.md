@@ -6,11 +6,11 @@ As developers delegate more implementation to AI agents, the bottleneck shifts f
 
 ## How a review works
 
-1. **You work with a coding agent as usual** (Claude Code or Codex, launched from the IDE's Agent Workbench). While it works, it silently records the decisions behind each change — the things a diff can't show.
-2. **You start the review when you're ready.** Open the **Code Review Docent** tool window (left sidebar); it shows how many decisions are pending and which session made them. One click asks the agent to compose the walkthrough.
+1. **You ask an agent for a code review** (Claude Code or Codex, in a session opened in the IDE's Agent Workbench): "let's start a code review". The agent composes the walkthrough in one go and opens it. You can also ask from the **Code Review Docent** tool window (left sidebar), which lists the live sessions.
+2. **Either seat works.** The session that made the change tells the story from what it knows. A session reviewing someone else's branch infers the reasons from the diff and commits, and the review says so at the top.
 3. **The Docent walks you through it.** Sections in a plan rail, narration above a real diff viewer, inline comments on the exact lines they're about. Everything is your IDE: Ctrl-click, find-usages, side-by-side or unified diff.
-4. **You drive.** Ask questions in any section — the agent answers from its first-hand knowledge of the change. Ask for changes — they're queued, not applied, while you keep reviewing.
-5. **Complete the review.** The queued change requests are dispatched to the agent, which implements them and records new decisions — so the follow-up delta is reviewable the same way.
+4. **You drive.** Ask questions in any section — the agent answers from its knowledge of the change, and says when a reason is a guess. Ask for changes — they're queued, not applied, while you keep reviewing.
+5. **Complete the review.** The queued change requests are dispatched to the agent, which implements them. Ask for a new review to walk through the follow-up delta.
 
 Nothing is hidden: every changed file appears in some section (an auto-synthesized "Other changes" section catches the remainder), so you stay in touch with the whole change.
 
@@ -28,12 +28,12 @@ Nothing is hidden: every changed file appears in some section (an auto-synthesiz
 ## First run
 
 1. Open your project and open the **Code Review Docent** tool window (left sidebar).
-2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works — and give it a task. Docent injects everything it needs into the launch automatically — its protocol, and its own MCP endpoint (serving only the 8 `docent_*` tools; additive, your existing MCP configuration is untouched). The agent starts recording decisions with no prompting.
-3. When the panel shows *"N decisions ready to review"*, click **Start reviewing**. The review opens as an editor tab; step through sections with the plan rail or **Alt+.** / **Alt+,**.
+2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works. Docent injects everything it needs into the launch automatically — its protocol, and its own MCP endpoint (serving only the 6 `docent_*` tools; additive, your existing MCP configuration is untouched).
+3. Ask the agent to start a code review, or click the session in the tool window. The review opens as an editor tab; step through sections with the plan rail or **Alt+.** / **Alt+,**.
 
 ## Troubleshooting
 
-- **The panel never shows pending decisions** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from Air* (a plain-terminal agent doesn't get the Docent protocol); the agent's session is still open.
+- **The agent doesn't know about the Docent** — check, in order: the panel isn't showing an MCP warning (it self-diagnoses and offers the fix); the agent was launched *from Air* (a plain-terminal agent doesn't get the Docent protocol); the agent's session is still open.
 - **"Docent isn't responding" on a question** — the agent may be busy or its session closed; use the **Nudge** link on the notice, or reopen the session and click **Connect agent…**.
 - **A workbench update broke something** — Docent self-checks its workbench integration at startup and raises a notification listing exactly what broke; update the plugin.
 
