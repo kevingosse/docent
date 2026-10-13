@@ -104,11 +104,13 @@ internal object DocentSeamCheck {
             if (AwbReflect.zeroArg(vfile, "getThreadId") == null) {
                 add("AgentThreadViewVirtualFile.getThreadId() is gone (can't identify open thread tabs)")
             }
-            if (AwbReflect.zeroArg(vfile, "getProjectPath") == null) {
-                add("AgentThreadViewVirtualFile.getProjectPath() is gone (can't scope thread tabs to the project)")
+            // 263.7029 dropped getProjectPath(); the session directory scopes tabs by projectDirectory now.
+            if (AwbReflect.zeroArg(vfile, "getProjectDirectory") == null) {
+                add("AgentThreadViewVirtualFile.getProjectDirectory() is gone (can't scope thread tabs to the project)")
             }
-            if (AwbReflect.zeroArg(vfile, "getTabKey") == null) {
-                add("AgentThreadViewVirtualFile.getTabKey() is gone (can't look the live terminal up in the registry)")
+            // 263.7029: the live terminal is keyed by localSessionIdentity (was: tabKey).
+            if (AwbReflect.zeroArg(vfile, "getLocalSessionIdentity") == null) {
+                add("AgentThreadViewVirtualFile.getLocalSessionIdentity() is gone (can't look the live terminal up)")
             }
             // The agent-id getter is value-class-mangled (getAgentId-KdGbIeA today), so match by prefix + shape.
             // NB the vfile also has an unrelated getProviderContentConfig(), which a "getProvider*" match would
