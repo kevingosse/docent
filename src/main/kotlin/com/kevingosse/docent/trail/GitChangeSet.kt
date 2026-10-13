@@ -49,6 +49,11 @@ object GitChangeSet {
         return tracked + untracked
     }
 
+    /** The commits between [baseRef] and HEAD, newest first, as "<short sha> <subject>" lines. Empty when
+     *  [baseRef] is HEAD. A reviewer-seat agent reads the reasons for the change from these. */
+    fun commitsSince(base: String, baseRef: String): List<String> =
+        lines(base, listOf("log", "--format=%h %s", "$baseRef..HEAD"))
+
     /** Files changed per [Trail]'s diff base (working-tree mode wins when [Trail.baseRef] is set). */
     fun forTrail(base: String, trail: Trail): List<Change> = when {
         trail.isWorkingTree() -> workingTree(base, trail.baseRef!!)

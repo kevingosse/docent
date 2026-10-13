@@ -22,7 +22,6 @@ import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.kevingosse.docent.AgentSessionInfo
-import com.kevingosse.docent.DecisionLog
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.ReviewEvent
 import com.kevingosse.docent.SessionLaunchOption
@@ -51,9 +50,8 @@ import javax.swing.Scrollable
  * sections and, under the current section, the files it touches. Selecting either drives the review tab in the
  * editor pane via [DocentReviewController] — this panel only writes selection and reflects it.
  *
- * With no trail loaded it becomes the **on-demand review launcher** (see [buildStartReviewState]): it railroads
- * the reviewer toward the one session that recorded the pending work and tucks every other path behind a
- * collapsed "Not the right session?" link, so the common case is a single obvious action.
+ * With no trail loaded it becomes the **review launcher** (see [buildStartReviewState]): it asks a live session,
+ * or a new one, to create a review. The usual path is simpler still: the user asks their agent in chat.
  */
 class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Disposable, DocentReviewController.Listener {
 
@@ -106,15 +104,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private var linkedTitle: String? = null
 
     /** The session we just asked to start a review (no trail loaded yet), so the empty state can show a
-     *  "preparing…" line until its docent_finalize_trail loads the trail here. Cleared once a trail loads. */
+     *  "preparing…" line until its docent_create_review loads the trail here. Cleared once a trail loads. */
     private var awaitingStartFrom: String? = null
 
-    /** Whether the no-trail surface's "Not the right session?" alternatives are expanded. Collapsed by default so
-     *  the railroaded primary action stands alone; the reviewer opts into the other paths. */
-    private var showAlternatives = false
-
     /** A one-shot line shown on the no-trail surface right after a review completes (e.g. "the agent is
-     *  implementing N changes…"). Cleared once a new trail loads or new decisions are recorded. */
+     *  implementing N changes…"). Cleared once a new trail loads. */
     private var completionNote: String? = null
 
     /** Whether the mid-review "Connect a different agent" choices are expanded (collapsed by default so the
@@ -141,9 +135,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         controller.addListener(this)
         controller.ensureLoaded()
         DocentReviewService.getInstance(project).onChangesUpdated = { scheduleRefresh() }
-        // Live-refresh the "ready for review" empty state as the agent records decisions off-EDT (its scratchpad
-        // grows). Only matters when no trail is loaded — that's the surface that lists sessions + pending counts.
-        DecisionLog.getInstance(project).onUpdated = { scheduleRefresh(onlyIfNoTrail = true) }
         // React to chat-tab activation: activating a tab builds its terminal, which flips a session from inactive
         // to reachable — refresh the connect/session lists so it moves to the active group without a manual reopen.
         project.messageBus.connect(this).subscribe(
@@ -183,10 +174,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         scheduleRefresh()
     }
 
-    /** Coalesce an off-EDT change into an EDT list rebuild. [onlyIfNoTrail] skips the work while a trail is loaded. */
-    private fun scheduleRefresh(onlyIfNoTrail: Boolean = false) {
+    /** Coalesce an off-EDT change into an EDT list rebuild. */
+    private fun scheduleRefresh() {
         ApplicationManager.getApplication().invokeLater({
-            if (onlyIfNoTrail && controller.trail != null) return@invokeLater
             refreshList()
         }, ModalityState.any())
     }
@@ -266,10 +256,9 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     /**
-     * The no-trail surface — the on-demand review launcher (DESIGN: don't auto-open after every change). It
-     * railroads: when the recorded decisions clearly belong to one live session it leads with a single "Start
-     * reviewing in …" card and hides every alternative behind "Not the right session?". Sessions are shown
-     * *only* when there's pending work to review (an empty session is never a startable option here).
+     * The no-trail surface — the review launcher. Nothing opens by itself (DESIGN: no review after every change).
+     * The reviewer picks a live session to ask for a review, or starts a new session that reviews the current
+     * branch from its diff and commits.
      */
     private fun buildStartReviewState() {
         // A load error wins — the user explicitly tried to open a trail that didn't read.
@@ -284,71 +273,27 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val service = DocentReviewService.getInstance(project)
         val directory = service.sessionDirectory
         val workbenchReady = directory != null && service.eventNotifier != null
-        val total = DecisionLog.getInstance(project).count()
 
-        if (total > 0) completionNote = null // new work recorded — the just-completed note is stale, move on
-
-        // Nothing recorded yet → a single calm message (or the just-completed note). Don't surface sessions:
-        // there's nothing to review, so an empty "New Thread" tab must never masquerade as a startable review.
-        if (total == 0) {
-            planList.add(messageLabel(completionNote ?:
-                "No changes to review yet.\n\nAs the coding agent works it records the decisions behind each " +
-                    "change. When there's something to review, it'll appear here and you can start the walkthrough.",
-            ))
-            if (!workbenchReady) {
-                planList.add(messageLabel("Agent Workbench isn't connected — you can still open a saved trail:"))
-            }
-            planList.add(loadTrailLink())
-            return
-        }
-
-        val counts = DecisionLog.getInstance(project).countsBySession()
-        val sessions = directory?.listSessions().orEmpty()
-
-        // Work is pending but no live session is visible to host it (workbench absent, or the authoring tab is gone).
-        if (!workbenchReady || sessions.isEmpty()) {
-            val reason = if (!workbenchReady) " Agent Workbench isn't connected."
-            else " Open the session that made the changes and it'll appear here."
-            planList.add(messageLabel(
-                "$total ${decisions(total)} ready to review — but I can't see the session that made them.$reason",
-            ))
-            planList.add(messageLabel("Ask the agent to call docent_finalize_trail, or open a saved trail:"))
-            planList.add(loadTrailLink())
-            planList.add(discardDecisionsLink(total))
-            return
-        }
-
+        planList.add(messageLabel(completionNote ?:
+            "No review open.\n\nAsk your agent to start a code review: the session that made the change, or " +
+                "any session to review someone else's branch.",
+        ))
         awaitingStartFrom?.let { planList.add(messageLabel("⟳  Asked $it to prepare the review…")) }
 
-        val likely = pickLikelySession(sessions, counts)
-        if (likely != null) {
-            planList.add(messageLabel(
-                "$total ${decisions(total)} ready to review. Start the walkthrough in the session that made them:",
-            ))
-            planList.add(primaryStartRow(likely, counts[likely.threadId] ?: 0))
-            val others = sessions.filter { it.threadId != likely.threadId }
-            planList.add(alternativesToggle())
-            if (showAlternatives) {
-                if (others.isNotEmpty()) planList.add(sectionHeader("Other sessions"))
-                others.sortedByDescending { counts[it.threadId] ?: 0 }
-                    .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-                newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
-                    .forEach { planList.add(it) }
-                planList.add(loadTrailLink())
-            }
-            planList.add(discardDecisionsLink(total))
+        if (!workbenchReady) {
+            planList.add(messageLabel("Agent Workbench isn't connected — you can still open a saved trail:"))
+            planList.add(loadTrailLink())
             return
         }
 
-        // Several sessions, none clearly the author → no railroad; present the picker plainly.
-        planList.add(messageLabel("$total ${decisions(total)} ready to review. Pick the session that made the changes:"))
-        planList.add(sectionHeader("Sessions"))
-        sessions.sortedByDescending { counts[it.threadId] ?: 0 }
-            .forEach { planList.add(alternativeSessionRow(it, counts[it.threadId] ?: 0)) }
-        newSessionRows(label = "Or start a new agent session") { startFreshSessionWith(it) }
+        val sessions = directory?.listSessions().orEmpty().sortedByDescending { it.updatedAt }
+        if (sessions.isNotEmpty()) {
+            planList.add(sectionHeader("Ask a session to start the review"))
+            sessions.forEach { planList.add(sessionRow(it)) }
+        }
+        newSessionRows(label = "Start a new session to review this branch") { startFreshSessionWith(it) }
             .forEach { planList.add(it) }
         planList.add(loadTrailLink())
-        planList.add(discardDecisionsLink(total))
     }
 
     /**
@@ -364,7 +309,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         McpPrereqStatus.DISABLED -> listOf(
             noticeRow(
                 "Docent's MCP endpoint isn't available and the IDE's MCP server is turned off — coding " +
-                    "agents can't reach the Docent, so no decisions get recorded and reviews can't run. " +
+                    "agents can't reach the Docent, so reviews can't run. " +
                     "(Agent sessions launched before the fix need to be relaunched afterwards.)",
             ),
             actionLinkRow("Turn on the MCP server") {
@@ -378,24 +323,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     "agents. You can still open saved trails; live agent features won't work here.",
             ),
         )
-    }
-
-    /**
-     * The session to railroad the reviewer toward, or null when it's genuinely ambiguous (show a picker instead).
-     * Confident when exactly one session recorded pending decisions, when one clearly leads the others, or when
-     * there's only a single live session at all.
-     */
-    private fun pickLikelySession(sessions: List<AgentSessionInfo>, counts: Map<String, Int>): AgentSessionInfo? {
-        val withPending = sessions.filter { (counts[it.threadId] ?: 0) > 0 }
-            .sortedByDescending { counts[it.threadId] ?: 0 }
-        return when {
-            withPending.size == 1 -> withPending.first()
-            // A clear leader: strictly more pending decisions than the runner-up.
-            withPending.size > 1 && (counts[withPending[0].threadId] ?: 0) > (counts[withPending[1].threadId] ?: 0) -> withPending.first()
-            // Only one live session at all — weak signal, but the only candidate.
-            sessions.size == 1 -> sessions.first()
-            else -> null
-        }
     }
 
     // --- Trail-loaded footer (inline; no bottom button bar) -----------------------------------------------------
@@ -498,18 +425,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     // --- No-trail-surface rows ----------------------------------------------------------------------------------
 
-    /** The railroaded primary action: a bordered, clickable card leading the reviewer into the likely session. */
-    private fun primaryStartRow(s: AgentSessionInfo, pending: Int): JComponent {
-        val title = "Start reviewing in “${cropTitle(s.title)}”"
-        val subParts = buildList {
-            if (!s.reachable) add("inactive — open its tab first")
-            if (pending > 0) add("$pending ${decisions(pending)}")
-            relativeTime(s.updatedAt).takeIf { it.isNotEmpty() }?.let { add(it) }
-        }
-        return primaryCard(title, subParts.joinToString("  ·  ").ifEmpty { null },
-            AllIcons.Actions.Execute, "Start the Docent walkthrough on this session") { sendStartReview(s) }
-    }
-
     /**
      * A bordered, clickable card for the *primary* action of a surface — visually louder than the plain
      * [actionLinkRow] links around it, so the reviewer's eye lands on the one normal next step. [accent] is the
@@ -551,12 +466,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
-    /** A de-emphasized alternative session row: pick this one instead. Clicking starts the review on it. */
-    private fun alternativeSessionRow(s: AgentSessionInfo, pending: Int): JComponent {
+    /** A live session row on the no-trail surface. Clicking asks that session to create the review. */
+    private fun sessionRow(s: AgentSessionInfo): JComponent {
         val title = escapeHtml(cropTitle(s.title))
         val parts = buildList {
             if (!s.reachable) add("inactive")
-            if (pending > 0) add("$pending pending")
             relativeTime(s.updatedAt).takeIf { it.isNotEmpty() }?.let { add(it) }
         }
         val suffix = if (parts.isEmpty()) "" else
@@ -564,39 +478,13 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val label = iconTextRow(
             s.icon, if (s.icon != null) "$title$suffix" else "&#x25B8;&nbsp;&nbsp;$title$suffix",
             unscaledReserve = if (s.icon != null) 34 else 28,
-            tooltip = if (s.reachable) "Start the Docent review on this session"
+            tooltip = if (s.reachable) "Ask this session to create the Docent review"
             else "Open this session's tab to activate it, then start the review",
         )
         return clickableRow(label, false, JBUI.Borders.empty(4, 10)) { sendStartReview(s) }
     }
 
-    /** The collapsed/expanded toggle for the alternative paths. */
-    private fun alternativesToggle(): JComponent =
-        actionLinkRow("Not the right session?  " + if (showAlternatives) "▾" else "▸") {
-            showAlternatives = !showAlternatives
-            refreshList()
-        }
-
     private fun loadTrailLink(): JComponent = actionLinkRow("Load a saved trail…") { loadTrail() }
-
-    /**
-     * Discard the whole pending decision log (a human action, not an agent one): you finished a change without
-     * reviewing it and are starting fresh with a clean agent, but its decisions are still queued here and would
-     * bleed into the next review. Guarded by a confirmation dialog — this is destructive (the on-disk
-     * decisions.json is deleted) and the link sits right beside the "start review" actions, so an accidental
-     * click must not silently wipe the queue.
-     */
-    private fun discardDecisionsLink(total: Int): JComponent = actionLinkRow("Discard pending decisions…") {
-        val message = "Discard $total pending ${decisions(total)}? This clears everything the coding agent has " +
-            "recorded so far and can't be undone. Start this only if you don't intend to review that work."
-        if (Messages.showYesNoDialog(project, message, "Discard Pending Decisions", "Discard", Messages.getCancelButton(), Messages.getWarningIcon()) == Messages.YES) {
-            DecisionLog.getInstance(project).clear()
-            notice = null
-            completionNote = null
-            awaitingStartFrom = null
-            refreshList()
-        }
-    }
 
     /** A left-aligned inline link row (replaces the old bottom buttons). */
     private fun actionLinkRow(text: String, action: () -> Unit): JComponent =
@@ -859,8 +747,8 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         return rows
     }
 
-    /** Ask [picked] to finalize and open the review now (clicked from the no-trail surface). No review is armed
-     *  yet, so we set the push-target fields the notifier reads directly; the agent's docent_finalize_trail
+    /** Ask [picked] to create and open the review now (clicked from the no-trail surface). No review is armed
+     *  yet, so we set the push-target fields the notifier reads directly; the agent's docent_create_review
      *  re-links authoritatively via its sessionToken. The empty state then shows a "preparing…" line until the
      *  trail loads here. */
     private fun sendStartReview(picked: AgentSessionInfo) {
@@ -879,16 +767,14 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 notice = null
                 awaitingStartFrom = cropTitle(picked.title.ifBlank { "the agent" })
             } else {
-                notice = "Couldn't message that session. Ask the agent in chat to call docent_finalize_trail to start the review."
+                notice = "Couldn't message that session. Ask the agent in chat to start the code review."
             }
             refreshList()
         }
     }
 
-    /** Launch a fresh agent session ([option], a workbench launch profile) that builds the review from the
-     *  recorded decisions — the no-trail "start a new session" path, for when none of the live sessions is the
-     *  author. A fresh session can still call docent_finalize_trail, which consumes the project-wide decision
-     *  log. */
+    /** Launch a fresh agent session ([option], a workbench launch profile) that reviews the current branch. The
+     *  new session didn't make the change, so it creates an inferred review from the diff and commits. */
     private fun startFreshSessionWith(option: SessionLaunchOption) {
         notice = null
         val launcher = DocentReviewService.getInstance(project).sessionLauncher ?: run {
@@ -896,8 +782,11 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             refreshList()
             return
         }
-        val prompt = "Please start the Code Review Docent review: call docent_finalize_trail now to synthesize the " +
-            "trail from the recorded decisions and open the walkthrough in the review UI."
+        val prompt = "Please start a Code Review Docent review of the change on the current branch. You did not " +
+            "make this change, so use source=\"inferred\". Find the docent tools with a tool search (limit 50): " +
+            "${com.kevingosse.docent.awb.DocentProtocolPrompt.TOOL_QUERY}. Call docent_change_summary with baseRef = " +
+            "the merge base of HEAD and the branch it targets (e.g. `git merge-base HEAD origin/main`; HEAD if " +
+            "the change is only uncommitted work), then compose the Trail and call docent_create_review."
         notice = "Starting “${option.label}”…"
         refreshList()
         launcher.startSession(prompt, option) { launched ->
@@ -1006,7 +895,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             // clean "no pending changes" initial state (nothing is pending, so show nothing extra).
             completionNote = if (n == 0) null
                 else "✔  Review complete — the agent is implementing $n requested change${if (n == 1) "" else "s"}. " +
-                    "A new review will appear here when it's ready."
+                    "Ask it for a new review when it's done."
             service.completeReview()
             controller.endReview() // drop the trail → the nav returns to the start-review surface
         }
@@ -1035,7 +924,6 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
-    private fun decisions(n: Int): String = "decision${if (n == 1) "" else "s"}"
     private fun changes(n: Int): String = "change${if (n == 1) "" else "s"}"
 
     private fun escapeHtml(s: String) =
@@ -1055,6 +943,5 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
     override fun dispose() {
         controller.removeListener(this)
         DocentReviewService.getInstance(project).onChangesUpdated = null
-        DecisionLog.getInstance(project).onUpdated = null
     }
 }

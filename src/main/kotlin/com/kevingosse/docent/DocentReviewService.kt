@@ -21,7 +21,7 @@ import javax.swing.Icon
  * It is the seam between two worlds:
  *  - the **UI** (EDT): the "discuss this section" strip and the inline comment cards post the human's
  *    remarks here and register where the agent's reply should land;
- *  - the **authoring agent** (an MCP coroutine): the same agent that called `docent_finalize_trail`
+ *  - the **authoring agent** (an MCP coroutine): the same agent that called `docent_create_review`
  *    drains those remarks via [awaitEvent], answers with [deliverReply], and records requested changes
  *    with [queueChange].
  *

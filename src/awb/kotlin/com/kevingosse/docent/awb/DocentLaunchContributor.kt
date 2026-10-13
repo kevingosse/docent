@@ -75,7 +75,7 @@ internal class DocentLaunchContributor : AgentThreadLaunchContributor {
                 AwbNames.PROVIDER_CLAUDE -> {
                     // This thread's id (== the Claude --session-id) is the push target for the one event that still
                     // pushes — the UI-initiated resume. Injected into THIS thread's system prompt as a token the
-                    // agent echoes to docent_finalize_trail. Claude WATCHES the EventLog (DeliveryMode.MONITOR).
+                    // agent echoes to docent_create_review. Claude WATCHES the EventLog (DeliveryMode.MONITOR).
                     val resolvedThreadId = LaunchInjection.resolveThreadId(threadId, preallocatedThreadId, command)
                     LaunchInjection.registerPushTarget(projectPath, providerValue)
                     LOG.info("Docent: Claude launch — injecting Docent protocol (Monitor delivery, thread=$resolvedThreadId)")

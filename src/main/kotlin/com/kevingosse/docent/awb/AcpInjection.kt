@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
  *    ([AcpIntroducedThreads]), so resuming a thread after a restart doesn't replay the protocol.
  *
  * Both seams see the Air thread id (`SessionRef.threadId` == the supplement context's `threadId` == the
- * thread-view tab's id), which is the sessionToken the agent echoes back to `docent_finalize_trail`, exactly as
+ * thread-view tab's id), which is the sessionToken the agent echoes back to `docent_create_review`, exactly as
  * on the terminal surface. This object remembers which agent each ACP thread runs, because the supplement
  * context carries no agent id and the protocol's delivery tail differs per provider (Claude watches the
  * EventLog with Monitor, Codex blocks on `docent_await_event`).

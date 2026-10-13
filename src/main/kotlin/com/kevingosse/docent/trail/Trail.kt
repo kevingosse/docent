@@ -16,7 +16,14 @@ data class Trail(
     // is diffed against (the "before"), with the live working tree as the "after". Set instead of [commit] when
     // the agent finalizes a Trail before committing (e.g. "HEAD"). When present it wins over [commit].
     val baseRef: String? = null,
+    // Where the WHY in this Trail comes from: "session" = the agent that made the change wrote it from its own
+    // history (author seat); "inferred" = an agent reviewing someone else's change guessed it from the diff and
+    // commits (reviewer seat). Null for Trails written before 0.9.0; treated as "session".
+    val source: String? = null,
 ) {
+    /** Whether the reasons in this Trail were guessed from the diff rather than known by the author's session. */
+    fun isInferred(): Boolean = source == SOURCE_INFERRED
+
     /**
      * The git ref for the diff's "before" side: [baseRef] verbatim if this Trail was captured over uncommitted
      * work, else `commit~1` for a committed Trail. Null if neither is set (nothing to diff against). The "after"
@@ -33,6 +40,11 @@ data class Trail(
 
     /** Caption for the diff's "after" side. */
     fun afterLabel(): String = if (isWorkingTree()) "Working tree" else (commit ?: "after")
+
+    companion object {
+        const val SOURCE_SESSION = "session"
+        const val SOURCE_INFERRED = "inferred"
+    }
 }
 
 /** One bite-sized step: the Docent's narration plus the code it points at. */

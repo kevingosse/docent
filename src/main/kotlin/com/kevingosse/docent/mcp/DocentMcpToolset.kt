@@ -10,7 +10,6 @@ import com.intellij.mcpserver.annotations.McpTool
 import com.intellij.mcpserver.projectOrNull
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.kevingosse.docent.DecisionLog
 import com.kevingosse.docent.DeliveryMode
 import com.kevingosse.docent.DocentReviewService
 import com.kevingosse.docent.EventLog
@@ -28,10 +27,11 @@ import kotlin.coroutines.coroutineContext
 /**
  * The Docent's MCP tools (docs/DESIGN.md §6/§7), in two halves that close one loop:
  *
- *  - **Authoring (capture, §7):** as you implement, [docent_record_decision] logs the non-reconstructable
- *    *why*; when done, [docent_change_summary] returns ground truth + your log, you compose a Trail, and
- *    [docent_finalize_trail] writes it and opens the review.
- *  - **Review (perform, §6):** [docent_finalize_trail] opens the review and arms the live loop. You do NOT
+ *  - **Creation (§7):** when the user asks for a code review, [docent_change_summary] returns the changed
+ *    files and the Trail schema, the agent composes a Trail in one go, and [docent_create_review] writes it and
+ *    opens the review. The agent either made the change (Trail source "session") or is reviewing someone
+ *    else's change and guesses the reasons from the diff and commits (source "inferred").
+ *  - **Review (perform, §6):** [docent_create_review] opens the review and arms the live loop. You do NOT
  *    poll: the IDE PUSHES each reviewer action into your session (see `awb/DocentEventNotifier`), and you respond
  *    with [docent_reply] and record requested changes with [docent_queue_change] (read-only — no edits until the
  *    human completes the review). [docent_await_event] remains only as a catch-up for a missed push.
@@ -55,7 +55,7 @@ class DocentMcpToolset : McpToolset {
      * level equivalent of the user unchecking "router-only" for each Docent tool — done automatically.
      *
      * The platform warns to set this only after evaluating tool-list pollution; that's an accepted trade here —
-     * the Docent's purpose is to be reachable the moment a review/authoring task starts, with no prompting.
+     * the Docent's purpose is to be reachable the moment a review starts, with no prompting.
      *
      * CAVEAT (field-tested 2026-06-18): this is **necessary but not sufficient** with the JetBrains workbench,
      * because that workbench launches the real **Claude Code CLI**, which defers MCP tools on the *client* side
@@ -79,8 +79,7 @@ class DocentMcpToolset : McpToolset {
         |file. (If you were given a watch command, use THAT; this tool will just sit idle.) Envelopes:
         |  - {"event":"message"|"comment", "id", ...}: answer with docent_reply using the same id; if they ask
         |    for a change, also call docent_queue_change, then call this tool again.
-        |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes,
-        |    recording a docent_record_decision per implemented request so the delta can be reviewed next.
+        |  - {"event":"review_completed", "queuedChanges"}: the review is done — implement the queued changes.
         |  - {"event":"review_discarded", "droppedChanges"}: the reviewer abandoned the review — implement
         |    NOTHING (the queue is dropped), stop calling this tool, and wait for the user.
         |It blocks until something is pending (no server-side timeout); keep calling it after each event until
@@ -104,7 +103,10 @@ class DocentMcpToolset : McpToolset {
     suspend fun docent_reply(
         @McpDescription("The id from the docent_await_event envelope you are answering.")
         eventId: String,
-        @McpDescription("Your reply, in the author's voice — the WHY, not a restatement of the diff.")
+        @McpDescription(
+            "Your reply — the WHY, not a restatement of the diff. On an inferred review (you did not write the " +
+                "change), say when a reason is your guess."
+        )
         text: String,
     ): String {
         val project = coroutineContext.projectOrNull
@@ -149,7 +151,7 @@ class DocentMcpToolset : McpToolset {
         |context may be gone, READ the trail file after this so you can answer from its recorded WHY (the
         |narration and inline comments), not from memory. Pass your sessionToken (from your system instructions)
         |so the reviewer's actions route back to THIS session. Defaults to <repo>/.idea/docent/trail.json.
-        |After this, drive the review exactly as after docent_finalize_trail: the IDE pushes each reviewer action
+        |After this, drive the review exactly as after docent_create_review: the IDE pushes each reviewer action
         |to you; reply with docent_reply, record requested changes with docent_queue_change (read-only until the
         |reviewer completes the review).
         """
@@ -174,7 +176,7 @@ class DocentMcpToolset : McpToolset {
             }
         }
         if (!Files.exists(abs)) {
-            return "No Trail file at $abs. Author one with docent_finalize_trail first, or pass the correct path."
+            return "No Trail file at $abs. Create one with docent_create_review first, or pass the correct path."
         }
         val trail = try {
             TrailLoader.load(abs)
@@ -182,14 +184,14 @@ class DocentMcpToolset : McpToolset {
             return "Couldn't read the Trail at $abs (${t.message}). It must be a valid Trail JSON object."
         }
         if (trail == null || trail.subject == null || trail.sections == null || trail.sections.isEmpty()) {
-            return "The Trail at $abs is missing a subject or sections[]; it doesn't look like a finalized Trail."
+            return "The Trail at $abs is missing a subject or sections[]; it doesn't look like a complete Trail."
         }
         return armReview(project, abs.toString(), trail, sessionToken)
     }
 
     /**
      * Point the review UI at [path], arm the live loop, and return the agent's drive-the-review instructions.
-     * Called by [docent_finalize_trail] after writing the Trail to open the review.
+     * Called by [docent_create_review] after writing the Trail to open the review.
      */
     private fun armReview(project: Project, path: String, trail: Trail, sessionToken: String = ""): String {
         val service = DocentReviewService.getInstance(project)
@@ -208,9 +210,15 @@ class DocentMcpToolset : McpToolset {
 
         val logPath = service.eventLogPath
         val monitor = service.deliveryMode == DeliveryMode.MONITOR && logPath != null
+        val inferred = trail.isInferred()
         return buildString {
             appendLine("Opened the Docent review for \"${trail.subject}\" (${trail.sections.size} sections).")
-            appendLine("You are now the live Docent — the author of this change, walking the human through it.")
+            if (inferred) {
+                appendLine("You are now the live Docent for a change you did NOT write: the reviewer sees that the")
+                appendLine("reasons in this trail are inferred from the diff and commits.")
+            } else {
+                appendLine("You are now the live Docent — the author of this change, walking the human through it.")
+            }
             appendLine()
             if (monitor) {
                 appendLine("Watch this review's events with the Monitor tool (persistent: true), running EXACTLY this command:")
@@ -221,14 +229,19 @@ class DocentMcpToolset : McpToolset {
             } else {
                 appendLine("Drive the review by calling docent_await_event (it blocks until the reviewer acts). For each event:")
             }
-            appendLine("  - a reviewer question/comment: answer from your first-hand knowledge of WHY (not a restatement")
-            appendLine("    of the diff) via docent_reply(eventId, text) using the event id in the JSON. If they request")
+            if (inferred) {
+                appendLine("  - a reviewer question/comment: answer from the trail, the code and the commits via")
+                appendLine("    docent_reply(eventId, text) using the event id in the JSON. Say plainly when a reason is")
+                appendLine("    your guess, and check the code before you claim what it does. If they request a change,")
+            } else {
+                appendLine("  - a reviewer question/comment: answer from your first-hand knowledge of WHY (not a restatement")
+                appendLine("    of the diff) via docent_reply(eventId, text) using the event id in the JSON. If they request")
+            }
             appendLine("    a change, also call docent_queue_change(...) and acknowledge it briefly (\"queued\") — do NOT")
             appendLine("    edit files yet, and don't pre-describe the implementation.")
             appendLine("  - a \"review_completed\" event: the reviewer is done. NOW implement the queued changes")
-            appendLine("    (editing is allowed), recording a docent_record_decision per implemented request (what")
-            appendLine("    the reviewer asked, how you addressed it) so the delta is reviewable the same way. Then")
-            appendLine("    tell the user the changes are ready for a follow-up review; do NOT finalize on your own.")
+            appendLine("    (editing is allowed). Then tell the user the changes are ready for a follow-up review;")
+            appendLine("    do NOT create a new review on your own.")
             appendLine("  - a \"review_discarded\" event: the reviewer abandoned the review. Implement NOTHING (the queue")
             appendLine("    is dropped); acknowledge in one line and wait for the user's next instruction.")
             appendLine()
@@ -242,83 +255,29 @@ class DocentMcpToolset : McpToolset {
         }
     }
 
-    // ===== Authoring side (docs/DESIGN.md §7 — "trace during, synthesize after") =====
+    // ===== Creation side (docs/DESIGN.md §7 — one-shot, when the user asks for a review) =====
     //
-    // As the agent works it calls docent_record_decision; when the change-set is done it reads
-    // docent_change_summary and submits the synthesized story with docent_finalize_trail, which writes the
-    // Trail and opens the very review the tools above drive. This closes the capture -> review loop.
+    // The agent reads docent_change_summary, composes the whole Trail at once, and submits it with
+    // docent_create_review, which writes the Trail and opens the very review the tools above drive.
 
     @McpTool
     @McpDescription(
         """
-        |The Code Review Docent is a code review tool: it captures the non-reconstructable WHY behind the code you
-        |change and then walks a human reviewer through that diff live — so they stay in touch with code that is
-        |increasingly written by AI. This tool is the capture step (you'll synthesize a Trail and present it later).
-        |Record one NON-reconstructable decision behind code you are editing — the WHY the diff can't show. Call
-        |this AS YOU GO, at the moment you make the decision while editing: the Trail is later synthesized from
-        |this log, which is what keeps it honest. Every entry must be tied to lines you changed or are about to
-        |change in the project. Be calibrated (this is not a diff narration) — record what the reviewer of that
-        |diff should know:
-        |  - choice: you picked one implementation over real alternatives;
-        |  - constraint: something external forced the code into an awkward shape;
-        |  - assumption: the code relies on something not guaranteed by the code around it;
-        |  - surprise: something non-obvious you discovered while implementing that changed how you wrote the code;
-        |  - verification: you checked a claim the code depends on against ground truth (and what you found).
-        |The full authoring flow: record_decision (repeatedly) -> change_summary -> compose Trail ->
-        |finalize_trail. Do NOT finalize on your own — keep recording until the user asks you to start the
-        |review (see docent_finalize_trail). Use docent_list_decisions to review what you've logged.
-        """
-    )
-    suspend fun docent_record_decision(
-        @McpDescription("What you decided AND why — the non-reconstructable part, not a restatement of the code.")
-        decision: String,
-        @McpDescription("One of: choice / constraint / assumption / surprise / verification.")
-        kind: String = "",
-        @McpDescription("What you weighed and rejected, and why (the dead-ends — lost forever otherwise).")
-        alternatives: String = "",
-        @McpDescription("Files this decision touched, comma- or newline-separated, project-root-relative.")
-        files: String = "",
-        @McpDescription(
-            "Optional symbol/snippet hint (a function or type name) to help anchor it later. Do NOT pass line " +
-                "numbers — code keeps moving; concrete line ranges are resolved at finalize against the final diff."
-        )
-        symbol: String = "",
-        @McpDescription(
-            "Your sessionToken from your system instructions, so this decision is attributed to THIS session — " +
-                "the IDE's \"Start review\" picker uses the per-session counts to suggest which session to review. " +
-                "Omit only if you have no sessionToken."
-        )
-        sessionToken: String = "",
-    ): String {
-        val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
-        val fileList = files.split(',', '\n').map { it.trim() }.filter { it.isNotEmpty() }
-        val id = DecisionLog.getInstance(project)
-            .record(decision, kind.trim(), alternatives.trim(), fileList, symbol.trim(), sessionToken.trim())
-        return "Recorded decision #$id. Keep recording as you work; present the review only when the user asks " +
-            "to start it (then call docent_change_summary, compose the Trail, and docent_finalize_trail)."
-    }
-
-    @McpTool
-    @McpDescription("Return the decisions you've recorded so far for this task, as a JSON array. Use it to review or self-check your log before finalizing (there is no edit — record a corrected decision if one was wrong).")
-    suspend fun docent_list_decisions(): String {
-        val project = coroutineContext.projectOrNull ?: return errorJson("No IDE project is open.")
-        return JsonObject().apply { add("recordedDecisions", decisionsJson(project)) }.toString()
-    }
-
-    @McpTool
-    @McpDescription(
-        """
-        |Read the ground truth for synthesis: the files you changed (vs baseRef, including untracked new files,
-        |each with its exact `changedLineRanges`) and the decisions you recorded. Call this when the change-set is
-        |done, BEFORE composing the Trail — build the narrative FROM the recorded decisions (so it can't drift
-        |from what actually happened), anchored to the changed files. Use `changedLineRanges` for anchor `ranges`
-        |and `anchorText` (a quoted snippet) for comment lines instead of guessing numbers — see `guidance`. The
-        |returned `guidance` restates the Trail JSON schema AND the section-vs-inline-comment granularity rule —
-        |read it carefully before composing.
+        |The Code Review Docent walks a human reviewer through a code change, with the WHY behind it. Call this
+        |tool ONLY when the user asks you to start a code review (in chat, or via a "[Code Review Docent]"
+        |message). It is the first of two calls: this one reads the ground truth, then docent_create_review
+        |opens the review.
+        |It returns the changed files (vs baseRef, including untracked new files, each with its exact
+        |`changedLineRanges`), the commits since baseRef, and `guidance`: the Trail JSON schema, the
+        |readability and granularity rules, and how to tell which seat you are in. Read `guidance` carefully
+        |before composing the Trail.
+        |baseRef: if YOU made the change in this session and it is uncommitted, HEAD. If you are reviewing a
+        |branch (someone else's, or already committed), the merge base with the target branch, e.g. the output
+        |of `git merge-base HEAD origin/main`.
         """
     )
     suspend fun docent_change_summary(
-        @McpDescription("The git ref your work is diffed against (the \"before\"); defaults to HEAD.")
+        @McpDescription("The git ref the change is diffed against (the \"before\"); the working tree is the \"after\". Defaults to HEAD.")
         baseRef: String = "HEAD",
     ): String {
         val project = coroutineContext.projectOrNull ?: return errorJson("No IDE project is open.")
@@ -343,13 +302,23 @@ class DocentMcpToolset : McpToolset {
             })
         }
         o.add("changedFiles", files)
-        o.add("recordedDecisions", decisionsJson(project))
+        o.add("commits", JsonArray().apply { GitChangeSet.commitsSince(base, ref).forEach { add(it) } })
         o.addProperty(
             "guidance",
             "Compose a Trail JSON: {subject, thesis(HTML), sections:[{headline, narration(HTML), " +
                 "anchors:[{path, ranges?:[{start,end}], label?, comments?:[{line, anchorText, body}]}]}]}. Line " +
                 "numbers (ranges start/end and comment line) are 1-based and end-INCLUSIVE, against the CURRENT " +
                 "working-tree file. " +
+                "SEAT — decide which one you are in, and pass it as `source` to docent_create_review: " +
+                "(a) source=\"session\": YOU made this change, in this session. Tell the story from what you know: " +
+                "the choices you made over real alternatives, the constraints you hit, the assumptions the code " +
+                "relies on, the surprises you found, what you verified. " +
+                "(b) source=\"inferred\": you are reviewing a change you did not make (someone else's branch, or " +
+                "work from a session you no longer remember). You do not know the reasons; infer them from the " +
+                "diff, the commit messages (read their full bodies with git log) and the surrounding code. " +
+                "Word every reason as a guess (\"likely because…\", \"this suggests…\"), and name the questions " +
+                "you could not answer — those are exactly what the reviewer should ask the author. Never present a " +
+                "guess as the author's intent. When in doubt, use \"inferred\". " +
                 "READABILITY — as important as the content itself: the reviewer READS this prose, so make it " +
                 "airy and scannable, never a wall of text. Break every narration (and the thesis) into SHORT " +
                 "paragraphs of 2–3 sentences, each wrapped in its own `<p>`…`</p>` — one idea per paragraph. Use " +
@@ -362,17 +331,16 @@ class DocentMcpToolset : McpToolset {
                 "spans for that file); " +
                 "(2) for every comment, set `anchorText` to a short, UNIQUE substring of the exact line the comment " +
                 "is about (quote the code verbatim, e.g. a distinctive token or call) — the IDE resolves it to the " +
-                "real line at finalize, so you needn't count lines; still put your best-guess `line` as a fallback " +
-                "(it disambiguates when a snippet appears more than once). " +
+                "real line when the review is created, so you needn't count lines; still put your best-guess `line` " +
+                "as a fallback (it disambiguates when a snippet appears more than once). " +
                 "GRANULARITY — the most important rule: a SECTION is a functional block of the change; its headline " +
                 "and narration must stand on their own and be understandable WITHOUT looking at the code (the " +
                 "high-level what and why a reviewer needs before reading anything). Anything that points at specific " +
                 "code — a line, a symbol, a concrete mechanism — belongs in an INLINE COMMENT on that line, NOT in " +
                 "the section narration. Never split one method or function across sections. Aim for a few coherent " +
                 "sections carried by rich inline comments, not many thin sections. " +
-                "Build everything FROM the recorded decisions above (the non-reconstructable why) — do NOT restate " +
-                "the diff. Anchor each section to files from changedFiles. Then submit with " +
-                "docent_finalize_trail(trailJson, baseRef=\"$ref\").",
+                "Carry the non-reconstructable WHY — do NOT restate the diff. Anchor each section to files from " +
+                "changedFiles. Then submit with docent_create_review(trailJson, source, baseRef=\"$ref\", sessionToken).",
         )
         return o.toString()
     }
@@ -380,13 +348,12 @@ class DocentMcpToolset : McpToolset {
     @McpTool
     @McpDescription(
         """
-        |Finish authoring: take the Trail you synthesized from your recorded decisions, validate it against the
+        |Create the code review: take the Trail you composed after docent_change_summary, validate it against the
         |actual change-set, write it to <repo>/.idea/docent/trail.json, and open the review on it — at which point
-        |you become the live Docent. The Trail is diffed against the working tree, so baseRef is
-        |forced onto it (any `commit` field is ignored). Each comment's `anchorText` is resolved to the real
-        |working-tree line here, so quoted snippets beat hand-counted line numbers. Validation flags anchors that
-        |aren't on changed files, comment snippets it couldn't locate, and warns if nothing was recorded during
-        |the task (a sign the story may be from memory, not the log).
+        |you become the live Docent. Call it only when the user asked for a review. The Trail is diffed against
+        |the working tree, so baseRef is forced onto it (any `commit` field is ignored). Each comment's
+        |`anchorText` is resolved to the real working-tree line here, so quoted snippets beat hand-counted line
+        |numbers. Validation flags anchors that aren't on changed files and comment snippets it couldn't locate.
         |trailJson SCHEMA (use these exact field names):
         |  {"subject": str, "thesis": str (HTML ok),
         |   "sections": [ {"headline": str, "narration": str (HTML ok),
@@ -397,16 +364,22 @@ class DocentMcpToolset : McpToolset {
         |                                    "body": str, "line": int?} ]? } ] } ] }
         |The code a comment points at goes in a section ANCHOR's `comments[]` (keyed by `path`), NOT a section-level
         |`comments`/`files`/`why`/`title`. If you skipped docent_change_summary, call it first for the changed-file
-        |list and exact line ranges.
+        |list, exact line ranges, and the seat rules.
         |Granularity reminder: sections = functional blocks understandable without the code; code-specific points
         |= inline comments. Never split one method across sections.
         """
     )
     @Suppress("SENSELESS_COMPARISON") // Gson can leave required fields null when JSON omits them (bypasses ctor).
-    suspend fun docent_finalize_trail(
-        @McpDescription("The synthesized Trail, as a JSON object (see docent_change_summary's `guidance` for the schema).")
+    suspend fun docent_create_review(
+        @McpDescription("The Trail, as a JSON object (see docent_change_summary's `guidance` for the schema).")
         trailJson: String,
-        @McpDescription("The git ref the change is diffed against; defaults to HEAD.")
+        @McpDescription(
+            "Where the WHY comes from: \"session\" if you made this change in this session and know its reasons; " +
+                "\"inferred\" if you are reviewing a change you did not make and guessed the reasons from the diff " +
+                "and commits. The reviewer sees this. When in doubt, \"inferred\"."
+        )
+        source: String,
+        @McpDescription("The git ref the change is diffed against; use the same one you passed to docent_change_summary. Defaults to HEAD.")
         baseRef: String = "HEAD",
         @McpDescription(
             "Your sessionToken from your system instructions. REQUIRED so the live review can message you " +
@@ -416,6 +389,11 @@ class DocentMcpToolset : McpToolset {
     ): String {
         val project = coroutineContext.projectOrNull ?: return "No IDE project is open."
         val projectDir = project.basePath ?: return "The project has no base path on disk."
+        val seat = source.trim().lowercase()
+        if (seat != Trail.SOURCE_SESSION && seat != Trail.SOURCE_INFERRED) {
+            return "source must be \"session\" (you made this change and know why) or \"inferred\" (you guessed the " +
+                "reasons from the diff and commits). Got: \"$source\"."
+        }
         // Anchor paths / line lookups are git-root-relative; the Trail file, however, lives under the *project's*
         // .idea (that's where the review loads it from), which may sit below the git root in a monorepo checkout.
         val base = GitChangeSet.repoRoot(projectDir)
@@ -427,20 +405,17 @@ class DocentMcpToolset : McpToolset {
             return "Couldn't parse the Trail JSON (${t.message}). It must be a JSON object with subject, thesis, and sections[]."
         }
         validateTrail(parsed)?.let { return it }
-        // Force the working-tree base; a captured Trail is diffed against baseRef, not a commit.
+        // Force the working-tree base; a created Trail is diffed against baseRef, not a commit.
         val warnings = mutableListOf<String>()
         // Resolve each comment's anchorText to a real working-tree line (line-number accuracy, DESIGN §7) before
         // forcing the base, so the stored Trail carries correct 1-based lines regardless of what the agent guessed.
-        val trail = resolveAnchors(base, ref, parsed.copy(baseRef = ref, commit = null), warnings)
+        val trail = resolveAnchors(base, ref, parsed.copy(baseRef = ref, commit = null, source = seat), warnings)
 
         // Audit against ground truth (DESIGN §7): every anchor should sit on a file the change actually touched.
         val changed = GitChangeSet.workingTree(base, ref).map { it.path }.toSet()
         trail.sections.flatMap { it.anchors }.map { it.path }.distinct()
             .filter { it !in changed }
             .forEach { warnings.add("anchored file isn't in the change-set (vs $ref): $it") }
-        if (DecisionLog.getInstance(project).isEmpty()) {
-            warnings.add("no decisions were recorded during authoring — the narrative may be reconstructed from memory rather than a log (DESIGN §7).")
-        }
 
         val file = Path.of(projectDir, ".idea", "docent", "trail.json")
         try {
@@ -458,7 +433,6 @@ class DocentMcpToolset : McpToolset {
             }
         }.trimEnd()
 
-        DecisionLog.getInstance(project).clear() // the log has been synthesized into the Trail; start fresh
         return "$report\n\n" + armReview(project, file.toString(), trail, sessionToken)
     }
 
@@ -538,22 +512,6 @@ class DocentMcpToolset : McpToolset {
     }
 
     // ----- JSON envelopes the agent parses -----
-
-    /** The recorded decisions as a JSON array, shared by [docent_list_decisions] and [docent_change_summary]. */
-    private fun decisionsJson(project: Project): JsonArray {
-        val arr = JsonArray()
-        DecisionLog.getInstance(project).all().forEach { d ->
-            arr.add(JsonObject().apply {
-                addProperty("id", d.id)
-                if (d.kind.isNotBlank()) addProperty("kind", d.kind)
-                addProperty("decision", d.decision)
-                if (d.alternatives.isNotBlank()) addProperty("alternatives", d.alternatives)
-                if (d.files.isNotEmpty()) addProperty("files", d.files.joinToString(", "))
-                if (d.symbol.isNotBlank()) addProperty("symbol", d.symbol)
-            })
-        }
-        return arr
-    }
 
     /** The await path's envelope: same JSON the [EventLog] file carries, but with poll-flavored hints. */
     private fun eventJson(event: ReviewEvent): String = ReviewEventEnvelope.toJson(event, monitor = false)

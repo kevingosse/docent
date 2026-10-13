@@ -29,10 +29,8 @@ object ReviewEventEnvelope {
                     else
                         "The reviewer finished. Implement the queued changes now (you may edit files) and stop " +
                             "calling docent_await_event.") +
-                        " As you implement each one, record a docent_record_decision (with your sessionToken) " +
-                        "citing what the reviewer asked and how you addressed it — especially where you deviated. " +
-                        "That makes the follow-up delta reviewable the same way. When done, tell the user the " +
-                        "requested changes are ready to review; do NOT finalize a trail on your own.",
+                        " When done, tell the user the requested changes are ready to review; do NOT create a " +
+                        "new review on your own.",
                 )
             }
 
@@ -43,7 +41,7 @@ object ReviewEventEnvelope {
                     "The reviewer DISCARDED this review. Do NOT implement any queued change — the queue has been " +
                         "dropped and the reviewer is starting over. " +
                         (if (monitor) "Your watch has now exited. " else "Stop calling docent_await_event. ") +
-                        "Do not edit files, do not record decisions, do not finalize a trail; just acknowledge in " +
+                        "Do not edit files, do not create a review; just acknowledge in " +
                         "one line and wait for the user's next instruction.",
                 )
             }

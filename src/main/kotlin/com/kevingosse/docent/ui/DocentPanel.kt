@@ -181,7 +181,7 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             if (error != null) DocentUi.emptyState("Couldn't load the trail", error)
             else DocentUi.emptyState(
                 "No review loaded",
-                "Capture decisions while working, then call docent_finalize_trail to write the Trail and open the review.",
+                "Ask your agent to start a code review. It creates the Trail and opens the review here.",
             ),
             BorderLayout.CENTER,
         )
@@ -235,6 +235,18 @@ class DocentPanel(private val project: Project) : JPanel(BorderLayout()), Dispos
             alignmentX = Component.LEFT_ALIGNMENT
             border = JBUI.Borders.emptyTop(6)
         })
+        // An inferred Trail was written by an agent that didn't make the change: say so before the reader
+        // takes its reasons for the author's.
+        if (j.isInferred()) {
+            column.add(JBLabel(
+                "<html><div style='width:${contentWidth}px'>The reasons in this review are inferred from the diff " +
+                    "and commits. The author did not state them.</div></html>",
+                AllIcons.General.Information, JBLabel.LEADING,
+            ).apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                border = JBUI.Borders.emptyTop(10)
+            })
+        }
 
         // The thesis, at a readable measure.
         column.add(DocentUi.htmlPane(j.thesis, contentWidth).apply {

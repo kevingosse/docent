@@ -8,7 +8,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * What the "discuss this section" strip ([SectionConversationPanel]) talks to (docs/DESIGN.md §6). The only
  * backend is [McpLoopBackend], which routes the remark to the connected agent (the one that armed the review via
- * `docent_finalize_trail` / `docent_resume_review`, or the session linked in the "Connect agent…" UI); its reply
+ * `docent_create_review` / `docent_resume_review`, or the session linked in the "Connect agent…" UI); its reply
  * arrives back through [DocentReviewService]. The conversation is only available when an agent is connected — the
  * panel disables its input otherwise — so there is no self-spawned fallback (the ACP self-spawn transport in
  * `acp/` is retained for the future different-model critic, not this chat).
