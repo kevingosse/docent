@@ -279,7 +279,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         awaitingStartFrom?.let { planList.add(messageLabel("⟳  Asked $it to prepare the review…")) }
 
         if (!workbenchReady) {
-            planList.add(messageLabel("Agent Workbench isn't connected — you can still open a saved trail:"))
+            planList.add(messageLabel("Air isn't connected — you can still open a saved trail:"))
             planList.add(loadTrailLink())
             return
         }
@@ -644,7 +644,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val sessions = service.sessionDirectory?.listSessions().orEmpty()
         if (sessions.isEmpty() && service.sessionLauncher == null) {
             target.add(cardMessageLabel(
-                "Agent Workbench isn't available. Open a workbench session, or resume from the agent with " +
+                "Air isn't available. Open a workbench session, or resume from the agent with " +
                     "docent_resume_review.",
             ))
             return
@@ -792,7 +792,7 @@ class DocentNavPanel(private val project: Project) : JPanel(BorderLayout()), Dis
             // as the push target via its session header. The launch contributor sets agentProvider + deliveryMode
             // for this provider as it launches. The status flips when the resume lands (onConnectionChanged).
             notice = if (launched) null
-            else "Couldn't start “${option.label}”. Start one from the Agent Workbench, then use Connect agent again."
+            else "Couldn't start “${option.label}”. Start one from Air, then use Connect agent again."
             refreshList()
         }
     }

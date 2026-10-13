@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Installs the Docent's workbench seams onto the per-project [DocentReviewService] at project open, so the UI
- * always has them whenever the Agent Workbench is present:
+ * always has them whenever Air is present:
  *  - [WorkbenchSessionDirectory] — lets the "Connect agent…" picker list live workbench sessions;
  *  - [DocentEventNotifier] — lets the review PUSH events into the driving agent's existing thread;
  *  - the agent project path the notifier passes back to the workbench.
@@ -39,15 +39,15 @@ class DocentWorkbenchSetup : ProjectActivity {
             service.eventNotifier = DocentEventNotifier(project)
             service.agentProjectPath = project.basePath
             // The nav panel may have built its no-trail surface before these seams existed (post-restart race),
-            // showing "Agent Workbench isn't available". Nudge it to rebuild now that the session list works.
+            // showing "Air isn't available". Nudge it to rebuild now that the session list works.
             service.onConnectionChanged?.invoke()
         } catch (t: Throwable) {
             LOG.warn("Docent: workbench seams failed to install", t)
             notify(
                 project,
-                "Docent can't integrate with the Agent Workbench",
+                "Docent can't integrate with Air",
                 "Installing the workbench integration failed (${t.javaClass.simpleName}: ${t.message}). " +
-                    "“Connect agent…” and live reviews won't work — an Agent Workbench update " +
+                    "“Connect agent…” and live reviews won't work — an Air update " +
                     "likely changed its API. Check idea.log and update the Docent plugin.",
                 NotificationType.ERROR,
             )
@@ -68,8 +68,8 @@ class DocentWorkbenchSetup : ProjectActivity {
         LOG.warn("Docent: workbench reflective seams broken: $broken")
         notify(
             project,
-            "Docent may not reach Agent Workbench sessions",
-            "This Agent Workbench build changed internal APIs the Docent relies on: " +
+            "Docent may not reach Air sessions",
+            "This Air build changed internal APIs the Docent relies on: " +
                 broken.joinToString("; ") + ". Session listing or event delivery may fail until the " +
                 "Docent plugin is updated for it.",
             NotificationType.WARNING,

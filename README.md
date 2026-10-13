@@ -6,7 +6,7 @@ As developers delegate more implementation to AI agents, the bottleneck shifts f
 
 ## How a review works
 
-1. **You ask an agent for a code review** (Claude Code or Codex, in a session opened in the IDE's Agent Workbench): "let's start a code review". The agent composes the walkthrough in one go and opens it. You can also ask from the **Code Review Docent** tool window (left sidebar), which lists the live sessions.
+1. **You ask an agent for a code review** (Claude Code or Codex, in a session opened in the IDE's Air): "let's start a code review". The agent composes the walkthrough in one go and opens it. You can also ask from the **Code Review Docent** tool window (left sidebar), which lists the live sessions.
 2. **The Docent walks you through it.** Sections in a plan rail, narration above a real diff viewer, inline comments on the exact lines they're about. Everything is your IDE: Ctrl-click, find-usages, side-by-side or unified diff.
 3. **You drive.** Ask questions in any section — the agent answers from its first-hand knowledge of the change. Ask for changes — they're queued, not applied, while you keep reviewing.
 4. **Complete the review.** The queued change requests are dispatched to the agent, which implements them. Ask for a new review to walk through the follow-up delta.
@@ -16,7 +16,7 @@ Nothing is hidden: every changed file appears in some section (an auto-synthesiz
 ## Requirements
 
 - **Rider 2026.2 EAP 8** (build 262.8377) — [EAP download](https://www.jetbrains.com/rider/nextversion/). Other IntelliJ-based IDEs of the same build line work too; the plugin's core is IDE-agnostic.
-- The **Agent Workbench** plugin (JetBrains Marketplace), matching the IDE build.
+- The **Air** plugin (JetBrains Marketplace), matching the IDE build.
 - A coding agent CLI: **Claude Code** or **Codex** (both verified; the workbench launches them).
 
 ## Install
@@ -27,7 +27,7 @@ Nothing is hidden: every changed file appears in some section (an auto-synthesiz
 ## First run
 
 1. Open your project and open the **Code Review Docent** tool window (left sidebar).
-2. Launch an agent session from **Air** (the Agent Workbench) — Chat or Terminal, either works. Docent adds its own MCP endpoint to the launch automatically (serving only the 6 `docent_*` tools; additive, your existing MCP configuration is untouched).
+2. Launch an agent session from **Air** — Chat or Terminal, either works. Docent adds its own MCP endpoint to the launch automatically (serving only the 6 `docent_*` tools; additive, your existing MCP configuration is untouched).
 3. Ask the agent to start a code review, or click the session in the tool window. The review opens as an editor tab; step through sections with the plan rail or **Alt+.** / **Alt+,**.
 
 ## Troubleshooting

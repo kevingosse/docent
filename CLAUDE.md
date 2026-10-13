@@ -41,8 +41,8 @@ what's left to build.
 
 - IntelliJ Platform plugin; Kotlin 2.4.0; Gradle 9.1.0; IntelliJ Platform Gradle Plugin 2.16.0.
 - Base platform: **builds against a locally-installed 2026.3 IDE that bundles Air** (IntelliJ IDEA 263.5712,
-  `ideLocalPath`), `since-build 262.8665` / `until-build 263.*`, Java 21 toolchain. Air (the Agent Workbench's new
-  name, plugin id `com.intellij.air` since 2026-07-28) is BUNDLED in 263 IDEs and pinned to the exact IDE build, so
+  `ideLocalPath`), `since-build 262.8665` / `until-build 263.*`, Java 21 toolchain. Air (plugin
+  id `com.intellij.air` since 2026-07-28) is BUNDLED in 263 IDEs and pinned to the exact IDE build, so
   the seam compiles against `bundledPlugin("com.intellij.air")`; `airPluginPath` overrides with a standalone
   install, `riderLocalPath` is the `runRider` target / fallback base (Rider 263 doesn't bundle Air yet). See
   `build.gradle.kts`.

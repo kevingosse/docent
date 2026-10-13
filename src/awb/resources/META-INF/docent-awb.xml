@@ -1,5 +1,5 @@
 <idea-plugin>
-    <!-- Loaded only when Air (plugin id com.intellij.air, formerly the Agent Workbench) is present. Installs the
+    <!-- Loaded only when Air (plugin id com.intellij.air) is present. Installs the
          Docent's workbench seams (thread directory + push notifier) at project open so "Connect agent…" and the
          review push path are available whenever Air is present, and adds the docent MCP entry to every agent Air
          launches, on BOTH of its surfaces:

@@ -10,7 +10,7 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# The plugin ships as ONE artifact built against the Air (ex Agent Workbench) air.* API of one IDE build
+# The plugin ships as ONE artifact built against Air's air.* API of one IDE build
 # (see build.gradle.kts header). No local IDE on the runner, so the build downloads the IntelliJ IDEA
 # Ultimate build named by `ideaVersion` — Air is bundled in it (see build.gradle.kts / gradle.properties).
 jobs:

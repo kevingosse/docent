@@ -8,7 +8,7 @@ import com.kevingosse.docent.ReviewEvent
 
 /**
  * Renders a [ReviewEvent] as the prompt text the connected agent receives as a new user turn. Extracted from
- * `DocentEventNotifier` because it touches **no** Agent Workbench type (only the platform-clean
+ * `DocentEventNotifier` because it touches **no** Air type (only the platform-clean
  * [DocentReviewService] / [EventLog] / [ReviewEvent]), so it lives here in `src/main` rather than the
  * AWB-touching `src/awb` seam. The notifier only supplies the delivery mechanics (live terminal / launcher push).
  */

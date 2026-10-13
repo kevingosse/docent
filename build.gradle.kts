@@ -7,7 +7,7 @@ plugins {
 }
 
 // --- One artifact, one Air generation (the "air.*" API) ----------------------------------------
-// The Air (formerly Agent Workbench) API is `@Internal` and moves fast. History:
+// The Air API is `@Internal` and moves fast. History:
 //   * 262.8377 and older: the pre-air `com.intellij.platform.ai.agent.*` / `agent.workbench.*` API.
 //   * 262.8665.20260706 (2026.2 EAP9): everything moved under `com.intellij.air.*`, Session→Thread.
 //   * 263.1445: `AgentThreadTerminalLaunchSpec`→`AgentThreadLaunchSpec`, `AgentThreadProvider`→`AgentId`.
@@ -128,12 +128,12 @@ intellijPlatform {
     }
 
     // Cross-IDE guarantee: the plugin is platform-clean (depends only on com.intellij.modules.platform,
-    // with the MCP / Agent Workbench seams gated behind optional dependencies), so the core review
+    // with the MCP / Air seams gated behind optional dependencies), so the core review
     // surface must load on any IntelliJ-based IDE. We compile against Rider, which has the whole API
     // surface on the classpath, so the compiler can't catch an accidental Rider-only call. The Plugin
     // Verifier does: it checks the built plugin against other products and flags any non-portable API.
     pluginVerification {
-        // Agent Workbench is an OPTIONAL dependency: the awb/ seam is gated behind <depends optional>
+        // Air is an OPTIONAL dependency: the awb/ seam is gated behind <depends optional>
         // and only loads in an IDE that has the matching AWB build. The IDEs we verify against either
         // lack AWB or bundle a DIFFERENT build, so its references look unresolved here even though they
         // resolve at runtime where AWB is present. externalPrefixes treats the package as provided (so

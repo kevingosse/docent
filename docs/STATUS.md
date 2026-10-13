@@ -12,7 +12,7 @@ built* lives in the code and its comments, not here.
 > inherited stale "not click-tested" claims from the previous STATUS — its judgment stands, its
 > facts don't all.
 
-> **2026-07-10, 0.6.0:** Agent Workbench 263.1445 (IDEA 2026.3 dev line) changed several `air.*`
+> **2026-07-10, 0.6.0:** Air 263.1445 (IDEA 2026.3 dev line) changed several `air.*`
 > signatures, and 0.5.2's stale launch-contributor registration was failing **every** AWB thread
 > launch there (`AbstractMethodError`). 0.6.x spanned both API generations — dual-mangled `contribute`,
 > reflective provider getters, seam-check tripwire. **Superseded by 0.7.0 below.**
@@ -40,7 +40,7 @@ built* lives in the code and its comments, not here.
 > **Built and javap-verified; not yet click-tested in a live review.**
 
 > **2026-09-08, 0.8.0:** the plugin went dead on IntelliJ IDEA 2026.3 (263.4739) with its **bundled Air**
-> (the Agent Workbench's new name). Two independent breaks, diagnosed from the Ultimate source:
+> (the new name). Two independent breaks, diagnosed from the Ultimate source:
 > (1) Air's plugin id became `com.intellij.air` (2026-07-28, no alias), so the optional `docent-awb.xml`
 > gated on `com.intellij.agent.workbench` never loaded — no seam, no seam-check balloon, silence;
 > (2) Claude and Codex are now **"folded" ACP agents**: the default Chat surface launches them through the

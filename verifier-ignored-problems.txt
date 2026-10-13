@@ -1,6 +1,6 @@
 // Plugin Verifier ignore list — see the pluginVerification block in build.gradle.kts.
 //
-// Agent Workbench is an OPTIONAL, build-pinned dependency: the awb/ seam is gated behind
+// Air is an OPTIONAL, build-pinned dependency: the awb/ seam is gated behind
 // <depends optional config-file="docent-awb.xml"> and only loads in an IDE that has the matching AWB
 // build installed. The IDEs we verify against either lack AWB or bundle a DIFFERENT build, so the
 // verifier reports references into it as unresolved classes/members even though they resolve at

@@ -293,7 +293,7 @@ class SectionConversationPanel(
                 status.text = if (delivered) {
                     "Nudged — the remark was re-sent to the agent's chat. Its reply will appear here."
                 } else {
-                    "Couldn't reach the agent. Open its chat tab in the Agent Workbench, or reconnect via " +
+                    "Couldn't reach the agent. Open its chat tab in Air, or reconnect via " +
                         "“Connect agent…” in the Docent panel, then send your message again."
                 }
                 refreshTranscript()

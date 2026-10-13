@@ -10,7 +10,7 @@ import com.kevingosse.docent.mcp.DocentMcpEndpoint
  * The delicate, **AWB-free** heart of the launch-injection path — extracted from `DocentLaunchContributor`
  * so it lives in the platform-clean `src/main` rather than the AWB-touching `src/awb` seam. Every function
  * here operates on `List<String>` / `String` / the platform-clean `DocentReviewService`, and touches **no**
- * Agent Workbench type. `DocentLaunchContributor` is just the thin EP-interface adapter: it unpacks the
+ * Air type. `DocentLaunchContributor` is just the thin EP-interface adapter: it unpacks the
  * `AgentThread*` launch objects into plain strings, calls in here, and repacks the result.
  *
  * This is the most fragile code in the plugin (command-line surgery whose failure silently breaks the

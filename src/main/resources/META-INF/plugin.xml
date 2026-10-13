@@ -16,7 +16,7 @@
     <!-- Optional: when the in-IDE MCP server is present, publish the Docent handoff tools so a
          workbench-launched coding agent can call them. The core plugin loads fine without it. -->
     <depends optional="true" config-file="docent-mcp.xml">com.intellij.mcpServer</depends>
-    <!-- Optional: when Air (formerly the Agent Workbench) is installed, install the Docent's workbench seams
+    <!-- Optional: when Air is installed, install the Docent's workbench seams
          (session directory for "Connect agent…", the push notifier) and add the docent MCP entry
          to every agent it launches — on the Terminal surface via CLI args, on the ACP surface via Air's ACP
          EPs. Air's plugin id became `com.intellij.air` on 2026-07-28 (263.x, bundled in the IDE); the old
