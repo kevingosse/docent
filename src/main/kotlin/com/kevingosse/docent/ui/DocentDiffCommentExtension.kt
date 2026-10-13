@@ -11,7 +11,10 @@ import com.intellij.diff.tools.util.side.TwosideTextDiffViewer
 import com.intellij.diff.util.Side
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.ex.EditorEx
@@ -36,11 +39,32 @@ object DocentDiffMarker {
 
     /** Whether interactive comment affordances are enabled (an agent is connected). Absent → treated as true. */
     val INTERACTIVE: Key<Boolean> = Key.create("docent.diff.interactive")
+
+    /** Set on the "after" editor of an interactive Docent diff: adds a reviewer comment at an editor line
+     *  (0-based). Returns false on a line with no after side (a removed line in the unified view). */
+    val ADD_COMMENT: Key<(Int) -> Boolean> = Key.create("docent.diff.addComment")
+}
+
+/**
+ * "Add Docent Comment" in the diff editor's context menu. Air's Code Notes shows its own gutter "+" on
+ * every hovered line, which is easy to take for ours; this action is the entry point that can't be confused.
+ */
+class DocentAddCommentAction : AnAction() {
+    override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabledAndVisible = e.getData(CommonDataKeys.EDITOR)?.getUserData(DocentDiffMarker.ADD_COMMENT) != null
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val editor: Editor = e.getData(CommonDataKeys.EDITOR) ?: return
+        editor.getUserData(DocentDiffMarker.ADD_COMMENT)?.invoke(editor.caretModel.logicalPosition.line)
+    }
 }
 
 /**
  * Carries the inline comment cards onto the diff surface — in *both* the side-by-side and unified
- * viewers — and the gutter "+" to add new ones. The diff viewers' editors are real `EditorEx`, so the
+ * viewers — and the gutter "+" (plus [DocentAddCommentAction]) to add new ones. The diff viewers' editors are real `EditorEx`, so the
  * card embedding is identical to the standalone editor cell; the only twist is the unified viewer maps
  * both sides into one document, so after-side lines are translated via its line convertor.
  *
@@ -144,6 +168,16 @@ class DocentDiffCommentExtension : DiffExtension() {
         // so skip it entirely. Seeded Docent comments above still render (read-only via the card's interactive flag).
         if (!interactive) return
 
+        fun addCommentAt(editorLine: Int): Boolean {
+            val afterLine = binding.editorToAfter(editorLine)
+            if (afterLine < 0) return false
+            val thread = CommentThread("you", "", afterLine + 1).apply { composing = true }
+            threads.add(thread)
+            embed(thread)
+            return true
+        }
+        editor.putUserData(DocentDiffMarker.ADD_COMMENT, ::addCommentAt)
+
         // GitHub-style "+" in the gutter, following the caret — but only on lines that exist on the
         // "after" side (so you can't comment on a deleted line in the unified view).
         var plus: RangeHighlighter? = null
@@ -156,13 +190,11 @@ class DocentDiffCommentExtension : DiffExtension() {
             plus = editor.markupModel.addLineHighlighter(safe, HighlighterLayer.LAST, null).apply {
                 gutterIconRenderer = object : GutterIconRenderer() {
                     override fun getIcon(): Icon = AllIcons.General.Add
-                    override fun getTooltipText() = "Add a comment here"
+                    override fun getTooltipText() = "Add a Docent comment here"
                     override fun isNavigateAction() = true
                     override fun getClickAction(): AnAction = object : AnAction() {
                         override fun actionPerformed(e: AnActionEvent) {
-                            val thread = CommentThread("you", "", afterLine + 1).apply { composing = true }
-                            threads.add(thread)
-                            embed(thread)
+                            addCommentAt(safe)
                         }
                     }
                     override fun equals(other: Any?) = other === this

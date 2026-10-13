@@ -87,6 +87,12 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-09-25, 0.9.2 (branch `docent-oneshot`):** Air 263.5983 adds Code Notes, which shows its own gutter
+> "+" on every hovered line of every diff. It does not remove our caret-line "+", but the two are easy to
+> confuse. New entry point: **Add Docent Comment** in the diff editor's context menu (`Docent.AddComment`,
+> no default shortcut). The gutter tooltip now says "Add a Docent comment here". Built against 263.5983, not
+> click-tested.
+
 > **2026-09-25, 0.9.1 (branch `docent-oneshot`):** no more injected instructions. The Docent protocol
 > (Claude `--append-system-prompt`, Codex `-c developer_instructions`, the ACP first-turn supplement) only
 > made sense for live decision recording. The tool descriptions now carry the "call when the user asks for a

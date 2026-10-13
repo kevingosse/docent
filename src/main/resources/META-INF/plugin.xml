@@ -71,5 +71,12 @@
                 text="Docent: Review Overview"
                 description="Back to the Docent review overview (the trailhead)"
                 icon="AllIcons.Actions.ListFiles"/>
+        <action id="Docent.AddComment"
+                class="com.kevingosse.docent.ui.DocentAddCommentAction"
+                text="Add Docent Comment"
+                description="Add a review comment on the caret line of a Docent diff"
+                icon="AllIcons.General.Add">
+            <add-to-group group-id="Diff.EditorPopupMenu" anchor="first"/>
+        </action>
     </actions>
 </idea-plugin>
