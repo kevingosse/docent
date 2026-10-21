@@ -75,7 +75,7 @@ internal object DocentSeamCheck {
             add("AcpMcpServerProvider moved or is gone (ACP threads won't get the docent MCP tools)")
         } else if (mcpProvider.methods.none {
                 java.lang.reflect.Modifier.isAbstract(it.modifiers) && it.name == ACP_MCP_PROVIDER_METHOD &&
-                    it.parameterCount == ACP_MCP_PROVIDER_ARITY
+                    it.parameterCount in ACP_MCP_PROVIDER_ARITIES
             }
         ) {
             // 263.5712 grew the method by an McpCapabilities parameter; a name-only probe let that slip past, so the
@@ -178,8 +178,9 @@ internal object DocentSeamCheck {
      *  `AcpAgentId` are ordinary types). */
     private const val ACP_MCP_PROVIDER_FQN = "com.intellij.air.acp.AcpMcpServerProvider"
     private const val ACP_MCP_PROVIDER_METHOD = "getMcpServers"
-    /** 263.5712: (projectDir, sessionScope, sessionRef, agentId, mcpCapabilities) + the suspend Continuation. */
-    private const val ACP_MCP_PROVIDER_ARITY = 6
+    /** (projectDir, sessionScope, sessionRef, agentId, mcpCapabilities[, eelDescriptor]) + the suspend Continuation:
+     *  7 since 263.7351 (the compiled override), 6 for 263.5712..263.7031 (the bridge overload). */
+    private val ACP_MCP_PROVIDER_ARITIES = setOf(6, 7)
 
     /** The ACP session handle passed to the MCP provider; the thread id hides in its localSessionId. */
     private const val SESSION_REF_FQN = "com.intellij.air.backend.session.api.SessionRef"

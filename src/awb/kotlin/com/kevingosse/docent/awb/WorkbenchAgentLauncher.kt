@@ -3,7 +3,7 @@ package com.kevingosse.docent.awb
 import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
 import com.intellij.air.frontend.core.agentCatalogSnapshot
-import com.intellij.air.frontend.core.launchAvailabilityModelOrNull
+import com.intellij.air.frontend.core.launchAvailabilityModelFor
 import com.intellij.air.frontend.launch.AgentSessionRouteItem
 import com.intellij.air.frontend.launch.agentSessionRouteItems
 import com.intellij.air.frontend.launch.preset.agentPickRows
@@ -74,11 +74,14 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
         // buildEnabledAgentCatalogMenuModel applies the user's per-agent enable setting; the availability model
         // carries CLI reachability (which routes actually work) and is what decides launchability below.
         val menuModel = buildEnabledAgentCatalogMenuModel(project, catalog)
-        val availability = project.service<AgentLaunchAvailabilityClient>().state.value
-            // The enable-setting is already applied by the menu model above, so this only has to answer
-            // "is the agent switched on at all" — routes/CLI reachability come from the state itself.
-            .launchAvailabilityModelOrNull(isAgentEnabled = { true })
-            ?: return emptyList()
+        // Before Air's first backend availability snapshot there's no reachability truth yet: offer nothing (the
+        // caller falls back to plain-agent options) rather than an optimistic guess.
+        val availabilityState = project.service<AgentLaunchAvailabilityClient>().state.value
+        if (!availabilityState.isInitialized) return emptyList()
+        // The enable-setting is already applied by the menu model above, so this only has to answer
+        // "is the agent switched on at all" — routes/CLI reachability come from the state itself.
+        // 263.7351: launchAvailabilityModelOrNull was deleted (IJAI-3551); launchAvailabilityModelFor is its successor.
+        val availability = launchAvailabilityModelFor(catalog, { true }, availabilityState)
         val routes: List<AgentSessionRouteItem> = agentSessionRouteItems(
             menuModel,
             availability,
@@ -147,6 +150,9 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                             projectDirectory = base,
                             launchProfile = launchProfile,
                             initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
+                            // 263.7351 (IJAI-3626): required, no default. Air's own non-composer launches pass
+                            // false (agent UI is an opt-in of the new-session composer).
+                            agentUi = false,
                         ),
                     )
                 }

@@ -11,6 +11,7 @@ import com.intellij.air.acp.api.AcpAgentId
 import com.intellij.air.backend.session.api.SessionRef
 import com.intellij.air.backend.session.launch.McpStreamUrlProvider
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.platform.eel.EelDescriptor
 import kotlinx.coroutines.CoroutineScope
 import java.nio.file.Path
 
@@ -33,9 +34,33 @@ import java.nio.file.Path
  */
 internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
 
+    // 263.7351: Air passes the session's EelDescriptor (where the agent runs). The Docent endpoint is the IDE's own
+    // loopback HTTP server either way, so it's unused here.
     override suspend fun getMcpServers(
         projectDir: Path,
         sessionScope: CoroutineScope,
+        sessionRef: SessionRef,
+        agentId: AcpAgentId,
+        mcpCapabilities: McpCapabilities,
+        agentEelDescriptor: EelDescriptor,
+    ): List<AcpMcpServerContribution> = contribute(projectDir, sessionRef, agentId, mcpCapabilities)
+
+    /**
+     * Bridge for the pre-263.7351 Air shape (5 params, no EelDescriptor; e.g. Rider 263.7031). Not an override here,
+     * but on an older Air its `invokeinterface` resolves to this method by name + descriptor, so the ACP surface
+     * keeps working there too. Remove once no supported IDE ships the old shape.
+     */
+    @Suppress("unused")
+    suspend fun getMcpServers(
+        projectDir: Path,
+        sessionScope: CoroutineScope,
+        sessionRef: SessionRef,
+        agentId: AcpAgentId,
+        mcpCapabilities: McpCapabilities,
+    ): List<AcpMcpServerContribution> = contribute(projectDir, sessionRef, agentId, mcpCapabilities)
+
+    private suspend fun contribute(
+        projectDir: Path,
         sessionRef: SessionRef,
         agentId: AcpAgentId,
         mcpCapabilities: McpCapabilities,
