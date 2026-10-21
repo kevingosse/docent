@@ -1,6 +1,5 @@
 package com.kevingosse.docent.awb
 
-import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.frontend.core.AgentLaunchAvailabilityClient
 import com.intellij.air.frontend.core.agentCatalogSnapshot
 import com.intellij.air.frontend.core.launchAvailabilityModelFor
@@ -146,7 +145,7 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                     AgentPromptBackendApi.getInstance().launchPrompt(
                         AgentPromptLaunchRequest(
                             // 263.4825: addressed by workspace id + project directory (was: one projectPath).
-                            workspaceId = sessionWorkspaceIdFromBackendPath(base),
+                            workspaceId = workspaceIdForPath(base),
                             projectDirectory = base,
                             launchProfile = launchProfile,
                             initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),

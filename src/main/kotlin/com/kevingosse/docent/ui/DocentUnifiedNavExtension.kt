@@ -23,7 +23,6 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileEditor.ex.IdeDocumentHistory
-import com.intellij.openapi.fileEditor.impl.IdeDocumentHistoryImpl
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
@@ -163,7 +162,9 @@ class DocentUnifiedNavExtension : DiffExtension() {
         val history = IdeDocumentHistory.getInstance(project)
         // Snapshot the back-stack so we can later drop *only* the transient "after-file@click" stop that the
         // two-hop navigation (open file → backend goto) leaves behind, keeping the diff as the Back target.
-        val backBefore = history.backPlaces.toList()
+        // Typed as List<Any?>: the element type is IdeDocumentHistoryImpl.PlaceInfo up to 263 and
+        // fileEditor.ex.PlaceInfo from 271, so naming either breaks the other (see placeFile / removeBackPlace).
+        val backBefore: List<Any?> = history.backPlaces.toList()
 
         val editor = FileEditorManager.getInstance(project)
             .openTextEditor(OpenFileDescriptor(project, vfile, offset), true) ?: return
@@ -183,13 +184,22 @@ class DocentUnifiedNavExtension : DiffExtension() {
     /** Drop the transient after-file back-stop the two-hop backend navigation introduces, so one Back returns to
      *  the diff. Removes only entries that are (a) newly added since [backBefore] and (b) on the opened [vfile];
      *  the diff's own back entry (a different, light virtual file) is preserved. */
-    private fun dropIntermediatePlace(history: IdeDocumentHistory, backBefore: List<IdeDocumentHistoryImpl.PlaceInfo>, vfile: VirtualFile) {
+    private fun dropIntermediatePlace(history: IdeDocumentHistory, backBefore: List<Any?>, vfile: VirtualFile) {
         runCatching {
-            history.backPlaces
-                .filter { it !in backBefore && it.file == vfile }
-                .forEach { history.removeBackPlace(it) }
+            // Reflective on purpose: PlaceInfo moved from IdeDocumentHistoryImpl.PlaceInfo (<= 263) to
+            // com.intellij.openapi.fileEditor.ex.PlaceInfo (271), which changes the JVM descriptor of
+            // removeBackPlace and the cast a typed `it.file` compiles to. Both shapes expose getFile().
+            val places: List<Any?> = history.backPlaces.toList()
+            val remove = history.javaClass.methods.firstOrNull { it.name == "removeBackPlace" && it.parameterCount == 1 }
+                ?: return@runCatching
+            places
+                .filter { it != null && it !in backBefore && placeFile(it) == vfile }
+                .forEach { remove.invoke(history, it) }
         }
     }
+
+    private fun placeFile(place: Any): Any? =
+        place.javaClass.methods.firstOrNull { it.name == "getFile" && it.parameterCount == 0 }?.invoke(place)
 
     /** Whether [offset] sits on (or just past) an identifier character — a cheap gate so the backend fallback
      *  only opens the file when the click is plausibly on a symbol, not on whitespace or punctuation. */

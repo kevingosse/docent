@@ -5,7 +5,6 @@ import com.intellij.air.shared.prompt.AgentPromptExistingSessionRequest
 import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
 import com.intellij.air.thread.view.AgentThreadViewVirtualFile
 import com.intellij.air.backend.session.api.AgentThread
-import com.intellij.air.backend.session.api.sessionWorkspaceIdFromBackendPath
 import com.intellij.air.backend.session.runtime.model.AgentWorkspaceThreads
 import com.intellij.air.backend.session.runtime.state.AgentThreadsStateStore
 import com.intellij.openapi.components.service
@@ -75,7 +74,7 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
         val result = runBlockingMaybeCancellable {
             AgentPromptBackendApi.getInstance().promptExistingSession(
                 AgentPromptExistingSessionRequest(
-                    workspaceId = workspace?.workspaceId ?: sessionWorkspaceIdFromBackendPath(projectPath),
+                    workspaceId = workspace?.workspaceId ?: workspaceIdForPath(projectPath),
                     projectDirectory = workspace?.projectDirectory ?: projectPath,
                     threadId = threadId,
                     initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt),

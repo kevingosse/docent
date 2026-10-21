@@ -123,7 +123,10 @@ intellijPlatform {
             // `com.intellij.air` plugin id (263.x bundled Air): on a 262 IDE (Air still `com.intellij.agent.workbench`)
             // it simply doesn't load; on a 263 IDE with a different Air build it degrades loudly via DocentSeamCheck.
             sinceBuild = awbBuild
-            untilBuild = "263.*"
+            // 271 (2027.1) included as of 0.9.7: the one binary passes the Plugin Verifier against IU-263.7351 and
+            // IU-271.1094 (Air included). The 263/271 differences are bridged in source: workspaceIdForPath,
+            // the reflective AgentThreadLaunchSpec copy, the type-agnostic PlaceInfo handling.
+            untilBuild = "271.*"
         }
     }
 

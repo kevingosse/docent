@@ -51,7 +51,43 @@ internal class DocentLaunchContributor : AgentThreadLaunchContributor {
         }
         val injected = injectedCommand(projectPath, agentId.value, threadId, launchSpec.command, launchSpec.preallocatedThreadId)
             ?: return launchSpec
-        return launchSpec.copy(command = injected)
+        return runCatching { copyWithCommand(launchSpec, injected) }
+            .onFailure { LOG.warn("Docent: couldn't rewrite the launch command; launching unchanged", it) }
+            .getOrDefault(launchSpec)
+    }
+
+    /**
+     * `launchSpec.copy(command = injected)`, but arity-agnostic. A compiled `copy(command = …)` binds to the exact
+     * synthetic `copy$default(spec, <every field>, mask, marker)`, and every field Air adds breaks it with
+     * NoSuchMethodError (271 added `AgentWriterHosting`). So call `copy$default` reflectively: `command` is the
+     * first field (bit 0 of the mask), and every other bit says "keep this field", so the placeholders passed for
+     * them are ignored.
+     */
+    private fun copyWithCommand(spec: AgentThreadLaunchSpec, command: List<String>): AgentThreadLaunchSpec {
+        val copy = spec.javaClass.methods.firstOrNull { it.name == "copy\$default" }
+            ?: error("AgentThreadLaunchSpec.copy\$default is gone")
+        val types = copy.parameterTypes
+        // (spec, field_0 … field_{n-1}, mask: Int, marker: Object)
+        val fieldCount = types.size - 3
+        require(fieldCount in 1..31 && types[1] == List::class.java) { "unexpected copy\$default shape: ${types.toList()}" }
+        val args = arrayOfNulls<Any>(types.size)
+        args[0] = spec
+        args[1] = command
+        for (i in 2..fieldCount) args[i] = zeroOf(types[i])
+        args[fieldCount + 1] = ((1 shl fieldCount) - 1) and 1.inv()
+        return copy.invoke(null, *args) as AgentThreadLaunchSpec
+    }
+
+    private fun zeroOf(type: Class<*>): Any? = when (type) {
+        java.lang.Boolean.TYPE -> false
+        Integer.TYPE -> 0
+        java.lang.Long.TYPE -> 0L
+        java.lang.Short.TYPE -> 0.toShort()
+        java.lang.Byte.TYPE -> 0.toByte()
+        Character.TYPE -> 0.toChar()
+        java.lang.Float.TYPE -> 0f
+        java.lang.Double.TYPE -> 0.0
+        else -> null
     }
 
     /**

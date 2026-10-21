@@ -63,8 +63,11 @@ internal object DocentSeamCheck {
                     "expected $EXISTING_REQUEST_FIELDS; event push will fail)",
             )
         }
-        if (AwbReflect.load(cl, WORKSPACE_IDS_FQN)?.methods?.none { it.name == WORKSPACE_ID_FROM_PATH } != false) {
-            add("sessionWorkspaceIdFromBackendPath is gone (can't address a launch request by workspace)")
+        // workspaceIdForPath builds the id from these two (the helper Air wraps them in moved packages in 271).
+        if (AwbReflect.load(cl, AIR_PATH_UTIL_FQN)?.methods?.none { it.name == NORMALIZE_PATH } != false ||
+            AwbReflect.load(cl, WORKSPACE_ID_FQN)?.constructors?.none { it.parameterTypes.contentEquals(arrayOf(String::class.java)) } != false
+        ) {
+            add("SessionWorkspaceId(String) / normalizeAirPathOrNull are gone (can't address a launch request by workspace)")
         }
 
         // The ACP-surface seams (the default Chat route for Claude/Codex since Air 263.x). Their EP interfaces are
@@ -170,9 +173,10 @@ internal object DocentSeamCheck {
     private const val PROMPT_EXISTING_REQUEST_FQN = "com.intellij.air.shared.prompt.AgentPromptExistingSessionRequest"
     private val EXISTING_REQUEST_FIELDS = listOf("workspaceId", "projectDirectory", "threadId", "initialMessageRequest")
 
-    /** `SessionWorkspaceIds.kt` top-level helpers; the seam derives a workspace id from a path with it. */
-    private const val WORKSPACE_IDS_FQN = "com.intellij.air.backend.session.api.SessionWorkspaceIdsKt"
-    private const val WORKSPACE_ID_FROM_PATH = "sessionWorkspaceIdFromBackendPath"
+    /** What [workspaceIdForPath] builds a workspace id from. */
+    private const val WORKSPACE_ID_FQN = "com.intellij.air.shared.core.identity.SessionWorkspaceId"
+    private const val AIR_PATH_UTIL_FQN = "com.intellij.air.shared.core.AirPathUtilKt"
+    private const val NORMALIZE_PATH = "normalizeAirPathOrNull"
 
     /** The ACP EP interface [DocentAcpMcpServerProvider] implements (not value-class mangled: `SessionRef` /
      *  `AcpAgentId` are ordinary types). */
