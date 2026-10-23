@@ -321,3 +321,5 @@ patterns. Its AI review is ACP-backed and streams structured findings, but rende
 non-interactive list in the Problems tool window — that's the open lane for us. Borrowed: a finding
 model with a stable `id` + line *range* + `reasoning` separate from `message`; stream-partial then
 reconcile; a read-only permission policy; the protocol layer isolated in its own module.
+
+<!-- dummy change -->

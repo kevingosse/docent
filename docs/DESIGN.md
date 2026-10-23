@@ -352,3 +352,5 @@ engagement for its own sake, we've built a slot machine, not a review tool.
 - **Triage / attention weight** — the Docent's labeling of each change by how much attention it
   deserves, always with a reason, never hiding anything.
 - **Composed view** — a synthetic view stitched from code fragments across different files/languages.
+
+<!-- dummy change -->
