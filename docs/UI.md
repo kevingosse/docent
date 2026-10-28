@@ -139,4 +139,4 @@ Replace `DocentPanel.showOverview` with a real page:
 Sequenced so every step ships a visible improvement and nothing later reworks anything earlier.
 The critic's third voice (ASSESSMENT week 2–3) lands on top of the kit with a one-line palette use.
 
-<!-- dummy change -->
+<!-- dummy change (edited via Edit tool) -->
