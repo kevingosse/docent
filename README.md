@@ -58,3 +58,4 @@ Without a local IDE configured, the build downloads the IntelliJ IDEA Ultimate b
 ## Design
 
 The vocabulary: the **Trail** is the captured story of a change; the **Docent** is the live agent that performs it. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full problem statement, principles, and architecture, and [`docs/STATUS.md`](docs/STATUS.md) for the current state.
+<!-- Dummy change -->
