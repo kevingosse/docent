@@ -10,10 +10,13 @@ import com.intellij.air.acp.AcpMcpToolInfo
 import com.intellij.air.acp.api.AcpAgentId
 import com.intellij.air.backend.session.api.SessionRef
 import com.intellij.air.backend.session.launch.McpStreamUrlProvider
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.platform.eel.EelDescriptor
 import kotlinx.coroutines.CoroutineScope
+import java.lang.reflect.Constructor
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Contributes the Docent's MCP endpoint to every Air **ACP** session of an agent the Docent can drive — the
@@ -80,21 +83,63 @@ internal class DocentAcpMcpServerProvider : AcpMcpServerProvider {
             val mcp = LaunchInjection.resolveDocentMcp { McpStreamUrlProvider.resolve() } ?: return emptyList()
             LOG.info("Docent: ACP $provider session (thread=$threadId) — contributing the '${AcpInjection.DOCENT_MCP_NAME}' MCP server")
             val headers = LaunchInjection.mcpHeaders(threadId, mcp).map { (name, value) -> HttpHeader(name, value) }
-            // 263.6460: a provider returns each server with a tools reader. Only Air's MCP debug view reads the
-            // tools, so the Docent reports none.
-            listOf(AcpMcpServerContribution(McpServer.Http(AcpInjection.DOCENT_MCP_NAME, mcp.url, headers), NO_TOOLS))
+            listOf(newContribution(McpServer.Http(AcpInjection.DOCENT_MCP_NAME, mcp.url, headers)))
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t
             LOG.warn("Docent: failed to contribute the docent MCP server to an ACP session; the agent launches without it", t)
+            // Without this server the agent simply has no docent tools and the user sees nothing wrong but "the agent
+            // can't find the tools". Say so, once per IDE run.
+            if (failureReported.compareAndSet(false, true)) {
+                DocentWorkbenchSetup.notify(
+                    null,
+                    "Agents won't see the Docent tools",
+                    "Docent couldn't add its tools to an Air agent session (${t.javaClass.simpleName}: ${t.message}). " +
+                        "The agent can't create or run a review. An Air update likely changed its API; check idea.log " +
+                        "and update the Docent plugin.",
+                    NotificationType.ERROR,
+                )
+            }
             emptyList()
         }
     }
 
-    private companion object {
+    internal companion object {
         private val LOG = logger<DocentAcpMcpServerProvider>()
+        private val failureReported = AtomicBoolean(false)
 
         private val NO_TOOLS = object : AcpMcpServerToolsReader {
             override suspend fun read(): List<AcpMcpToolInfo> = emptyList()
+        }
+
+        /**
+         * The `AcpMcpServerContribution` constructor the Docent calls, or null if this Air has none that fits.
+         *
+         * Called by reflection because its shape keeps changing under the same since-build: 263.6460 had
+         * `(server, tools)`; 263.7786 / 271.2039 replaced it with `(server, tools, skillToolCandidates, guidance,
+         * proxyTarget)` (plus an internal one with an `isGoverned` boolean). A compiled call binds to one exact shape
+         * and dies with NoSuchMethodError on the other. So: the shortest public constructor that starts with
+         * `(McpServer, AcpMcpServerToolsReader)` and whose remaining parameters are all nullable references. That skips
+         * the internal `isGoverned` one (a primitive) and Kotlin's synthetic defaults one (an `int` mask).
+         * [DocentSeamCheck] probes this same lookup.
+         */
+        internal fun contributionConstructor(): Constructor<*>? =
+            AcpMcpServerContribution::class.java.constructors
+                .filter { ctor ->
+                    val types = ctor.parameterTypes
+                    types.size >= 2 && types[0] == McpServer::class.java &&
+                        types[1] == AcpMcpServerToolsReader::class.java &&
+                        types.drop(2).none { it.isPrimitive || it.name == "kotlin.jvm.internal.DefaultConstructorMarker" }
+                }
+                .minByOrNull { it.parameterCount }
+
+        /** One server with no tools to report (only Air's MCP debug view reads them) and every newer field left null. */
+        private fun newContribution(server: McpServer): AcpMcpServerContribution {
+            val ctor = contributionConstructor()
+                ?: error("no AcpMcpServerContribution(McpServer, AcpMcpServerToolsReader, …) constructor in this Air")
+            val args = arrayOfNulls<Any>(ctor.parameterCount)
+            args[0] = server
+            args[1] = NO_TOOLS
+            return ctor.newInstance(*args) as AcpMcpServerContribution
         }
     }
 }

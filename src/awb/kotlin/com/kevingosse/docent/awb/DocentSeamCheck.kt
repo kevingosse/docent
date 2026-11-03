@@ -14,7 +14,9 @@ package com.kevingosse.docent.awb
  *  - `AgentThreadLaunchContributor` + its mangled `contribute-…` name: [DocentLaunchContributor] implements this
  *    interface, so a rename means the EP implementation can't load and **agents launch without the Docent
  *    protocol**; a signature change alone means [AbstractMethodError] on every launch. Loudest check here.
- *  - The prompt-launch client: the fallback push channel for a thread whose terminal isn't open.
+ *  - `AcpMcpServerProvider` and the `AcpMcpServerContribution` constructor: the ACP route by which agents get the
+ *    docent MCP tools ([DocentAcpMcpServerProvider]).
+ *  - The prompt-launch client:the fallback push channel for a thread whose terminal isn't open.
  *  - The thread-view vfile, the live-terminal registry and the terminal tab: the "type into the live terminal"
  *    channel and the reachability flag in the "Connect agent…" picker ([AwbTerminalTab]).
  */
@@ -88,6 +90,11 @@ internal object DocentSeamCheck {
                     "${mcpProvider.methods.filter { java.lang.reflect.Modifier.isAbstract(it.modifiers) }.map { "${it.name}/${it.parameterCount}" }}; " +
                     "ACP threads won't get the docent MCP tools)",
             )
+        }
+        // The server entry the provider builds. Its constructor changed shape twice (263.6460, 263.7786/271.2039), and
+        // a miss there only surfaced as a WARN in idea.log while the agent quietly had no docent tools.
+        if (runCatching { DocentAcpMcpServerProvider.contributionConstructor() }.getOrNull() == null) {
+            add("AcpMcpServerContribution has no (McpServer, AcpMcpServerToolsReader, …) constructor (ACP threads won't get the docent MCP tools)")
         }
         // The provider reads the thread id off the SessionRef as localSessionId.value (263.5096 — before that,
         // a direct `threadId`); a re-shape drops the session header inside the provider's catch-all.

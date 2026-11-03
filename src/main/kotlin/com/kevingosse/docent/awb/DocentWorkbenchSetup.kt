@@ -76,16 +76,17 @@ class DocentWorkbenchSetup : ProjectActivity {
         )
     }
 
-    private fun notify(project: Project, title: String, content: String, type: NotificationType) {
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup(NOTIFICATION_GROUP)
-            .createNotification(title, content, type)
-            .notify(project)
-    }
-
-    private companion object {
+    internal companion object {
         private val LOG = logger<DocentWorkbenchSetup>()
         private const val NOTIFICATION_GROUP = "Code Review Docent"
         private val seamsChecked = AtomicBoolean(false)
+
+        /** A Docent balloon. A null [project] shows it in the active frame (for seams that have no project at hand). */
+        internal fun notify(project: Project?, title: String, content: String, type: NotificationType) {
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup(NOTIFICATION_GROUP)
+                .createNotification(title, content, type)
+                .notify(project)
+        }
     }
 }

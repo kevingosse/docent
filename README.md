@@ -13,9 +13,13 @@ As developers delegate more implementation to AI agents, the bottleneck shifts f
 
 Nothing is hidden: every changed file appears in some section (an auto-synthesized "Other changes" section catches the remainder), so you stay in touch with the whole change.
 
+Diff test line 1.
+Diff test line 2.
+Diff test line 3, revised.
+
 ## Requirements
 
-- **Rider 2026.2 EAP 8** (build 262.8377) — [EAP download](https://www.jetbrains.com/rider/nextversion/). Other IntelliJ-based IDEs of the same build line work too; the plugin's core is IDE-agnostic.
+- **Rider 2026.2 EAP 8** (build 262.8377) — [EAP download](https://www.jetbrains.com/rider/nextversion/). Other IntelliJ-based IDEs of the same build line work too; the plugin's core is IDE-agnostic. (tested)
 - The **Air** plugin (JetBrains Marketplace), matching the IDE build.
 - A coding agent CLI: **Claude Code** or **Codex** (both verified; the workbench launches them).
 

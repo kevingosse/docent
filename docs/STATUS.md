@@ -87,6 +87,12 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-11-03, 0.9.8:** on IU-271.2039 (and 263.7786) ACP threads had no docent tools. Air replaced the
+> `AcpMcpServerContribution(server, tools)` constructor with a five-argument one, so the provider died with
+> `NoSuchMethodError` and only logged a WARN. The provider now picks the constructor by reflection (one binary for old
+> and new shapes), shows an error balloon once per IDE run when adding the server fails, and `DocentSeamCheck` probes
+> the constructor. Built, not click-tested.
+
 > **2026-10-13, 0.9.4:** rebuilt against IU-263.7029. Air moved the terminal tab to
 > `com.intellij.air.frontend.session.terminal` and replaced the per-project live-terminal registry with the
 > app service `AgentTerminalRuntimeManager` (keyed by the vfile's `localSessionIdentity`); `AwbTerminalTab` now
