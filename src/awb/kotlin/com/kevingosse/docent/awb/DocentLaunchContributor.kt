@@ -73,21 +73,9 @@ internal class DocentLaunchContributor : AgentThreadLaunchContributor {
         val args = arrayOfNulls<Any>(types.size)
         args[0] = spec
         args[1] = command
-        for (i in 2..fieldCount) args[i] = zeroOf(types[i])
+        for (i in 2..fieldCount) args[i] = AirRequests.zeroOf(types[i])
         args[fieldCount + 1] = ((1 shl fieldCount) - 1) and 1.inv()
         return copy.invoke(null, *args) as AgentThreadLaunchSpec
-    }
-
-    private fun zeroOf(type: Class<*>): Any? = when (type) {
-        java.lang.Boolean.TYPE -> false
-        Integer.TYPE -> 0
-        java.lang.Long.TYPE -> 0L
-        java.lang.Short.TYPE -> 0.toShort()
-        java.lang.Byte.TYPE -> 0.toByte()
-        Character.TYPE -> 0.toChar()
-        java.lang.Float.TYPE -> 0f
-        java.lang.Double.TYPE -> 0.0
-        else -> null
     }
 
     /**

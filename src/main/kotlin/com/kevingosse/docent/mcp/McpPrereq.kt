@@ -82,9 +82,13 @@ private object McpServerGate {
         serviceClass.getMethod("start").invoke(service)
     }
 
+    /** The object carrying `enableMcpServer`: the persisted state class in older MCP plugins, the settings
+     *  service itself once `McpServerSettings` became an interface without `getState()` (263.7307 / 271.2467). */
     private fun settingsState(): Any {
         val settingsClass = Class.forName("com.intellij.mcpserver.settings.McpServerSettings")
         val settings = settingsClass.getMethod("getInstance").invoke(null)
-        return settingsClass.getMethod("getState").invoke(settings)
+        val getState = settingsClass.methods.firstOrNull { it.name == "getState" && it.parameterCount == 0 }
+            ?: return settings
+        return getState.invoke(settings)
     }
 }

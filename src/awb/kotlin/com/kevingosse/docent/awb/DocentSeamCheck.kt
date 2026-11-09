@@ -1,5 +1,7 @@
 package com.kevingosse.docent.awb
 
+import com.intellij.air.shared.core.thread.AgentId
+
 /**
  * One-shot self-check of the `@Internal` air.* APIs the Docent stands on (T2 in docs/ASSESSMENT.md).
  * [DocentWorkbenchSetup] runs this once per IDE run and raises a notification listing whatever no longer
@@ -41,8 +43,17 @@ internal object DocentSeamCheck {
         }
 
         if (AwbReflect.load(cl, PROMPT_LAUNCH_CLIENT_FQN) == null) {
-            add("AgentPromptBackendApi is gone (can't push events to an idle thread, or start new sessions)")
+            add("AgentPromptBackendApi is gone (can't start new sessions)")
         }
+        // 271.2467 dropped promptExistingSession from AgentPromptBackendApi; the push uses this project service.
+        if (AwbReflect.load(cl, PROMPT_LAUNCH_SERVICE_FQN)?.methods?.none { it.name == "promptExistingSession" } != false) {
+            add("AgentPromptBackendLaunchService.promptExistingSession is gone (can't push events to an idle thread)")
+        }
+        // The requests are built by field name (AirRequests); a field it names going away fails here.
+        runCatching {
+            AirRequests.initialMessage("probe")
+            AirRequests.minimalProfile("probe", AgentId.from(AwbNames.PROVIDER_CLAUDE))
+        }.onFailure { add("Air's prompt requests changed shape (${it.message}; event push and new sessions will fail)") }
         // The request the seam constructs statically: 263.4825 re-keyed it from `projectPath` to
         // `workspaceId: SessionWorkspaceId` + `projectDirectory` — a silent NoSuchMethodError inside the push
         // otherwise, which the notifier's catch-all would report as a bland "not delivered".
@@ -169,8 +180,11 @@ internal object DocentSeamCheck {
     /** Its single abstract method's JVM name — mangled by the `agentId: AgentId` value-class parameter. */
     private const val CONTRIBUTE_METHOD = "contribute-WeWHIlw"
 
-    /** The prompt-launch RPC surface used by both the push fallback and "start a new session". */
+    /** The prompt-launch RPC surface used by "start a new session". */
     private const val PROMPT_LAUNCH_CLIENT_FQN = "com.intellij.air.shared.prompt.AgentPromptBackendApi"
+
+    /** The project service the push fallback prompts an existing thread through. */
+    private const val PROMPT_LAUNCH_SERVICE_FQN = "com.intellij.air.frontend.prompt.ui.AgentPromptBackendLaunchService"
 
     /** Its new-session request, and the fields the seam passes (263.5160 shape: `targetThreadId` is gone). */
     private const val PROMPT_LAUNCH_REQUEST_FQN = "com.intellij.air.shared.prompt.AgentPromptLaunchRequest"

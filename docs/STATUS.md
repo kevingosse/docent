@@ -87,6 +87,18 @@ built* lives in the code and its comments, not here.
 > (`ideLocalPath`); no source change needed. The 0.8.2 route-profile fix therefore ships first-run in 0.8.3.
 > **User-verified on 263.4953:** "Start review" reaches the live ACP thread.
 
+> **2026-11-09, 0.9.9:** on IU-271.2467, "Start review" said "Couldn't message that session", and the Docent panel
+> claimed the IDE had no MCP Server plugin. Four API changes caused it. (1) `AgentPromptInitialMessageRequest`
+> gained two fields, so the compiled constructor call failed with `NoSuchMethodError`. `AgentPromptLaunchRequest`
+> and `AgentPromptLaunchProfile` also gained a field each. All three are now built by field name through their
+> defaults constructor (`AirRequests`). (2) `AgentPromptBackendApi` lost `promptExistingSession`. The push now
+> goes through the project service `AgentPromptBackendLaunchService`, which has it in both 263 and 271.
+> (3) `McpServerService` changed from a class to an interface, so the private docent MCP endpoint failed to start
+> (`IncompatibleClassChangeError`). It now calls `authorizedSession` by reflection. (4) `McpServerSettings` became
+> an interface without `getState()`, which made the prerequisite check report "no MCP Server plugin" (already
+> true on 263.7307). Rebuilt against IU-263.7307. The Plugin Verifier reports Compatible on IU-263.7307 and
+> IU-271.2467, and the request builders were run against both builds' real Air jars. Not click-tested.
+
 > **2026-11-03, 0.9.8:** on IU-271.2039 (and 263.7786) ACP threads had no docent tools. Air replaced the
 > `AcpMcpServerContribution(server, tools)` constructor with a five-argument one, so the provider died with
 > `NoSuchMethodError` and only logged a WARN. The provider now picks the constructor by reflection (one binary for old

@@ -1,8 +1,6 @@
 package com.kevingosse.docent.awb
 
-import com.intellij.air.shared.prompt.AgentPromptBackendApi
-import com.intellij.air.shared.prompt.AgentPromptExistingSessionRequest
-import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
+import com.intellij.air.frontend.prompt.ui.AgentPromptBackendLaunchService
 import com.intellij.air.thread.view.AgentThreadViewVirtualFile
 import com.intellij.air.backend.session.api.AgentThread
 import com.intellij.air.backend.session.runtime.model.AgentWorkspaceThreads
@@ -20,15 +18,16 @@ import com.kevingosse.docent.ReviewEvent
 /**
  * Pushes a reviewer event into an agent's existing AWB thread — used to
  * wake a thread that isn't in a turn (the `REVIEW_RESUMED` / `START_REVIEW` events). Two channels:
- * (1) type into the live open thread-view terminal ([AwbTerminalTab]), (2) the backend prompt API's
+ * (1) type into the live open thread-view terminal ([AwbTerminalTab]), (2) Air's
  * `promptExistingSession`, addressed by thread id.
  *
  * Notes on the AWB surface (see docs/AWB-2026.3-COMPAT.md):
- *  - The launcher-bridge lookup (`AgentPromptLaunchers.find()`) is gone; prompts now go through the backend RPC
- *    surface [AgentPromptBackendApi] (its frontend wrapper is Kotlin-`internal`, this interface is not). Both
- *    `getInstance()` and the prompt calls are `suspend`, bridged from this non-suspend [notifyAgent] with
- *    [runBlockingMaybeCancellable] — same as the pre-layering bridge call. Callers must be off the EDT (the
- *    platform forbids blocking there); [DocentReviewService.pushToAgent] provides the pooled-thread hop.
+ *  - The existing-thread prompt goes through the project service [AgentPromptBackendLaunchService]. Until 263.x it
+ *    went through the backend RPC surface `AgentPromptBackendApi`, which lost `promptExistingSession` in 271.2467;
+ *    the project service has it unchanged in both. The call is `suspend`, bridged from this non-suspend
+ *    [notifyAgent] with [runBlockingMaybeCancellable]. Callers must be off the EDT (the platform forbids blocking
+ *    there); [DocentReviewService.pushToAgent] provides the pooled-thread hop.
+ *  - The request is built by [AirRequests], not a compiled constructor call: Air keeps adding fields to it.
  *  - Since Air 263.5160 prompting an EXISTING thread is its own call, `promptExistingSession(
  *    AgentPromptExistingSessionRequest(workspaceId, projectDirectory, threadId, initialMessageRequest))`. Before
  *    that it was `launchPrompt` with a `targetThreadId` plus a launch profile synthesized from the thread's stored
@@ -71,15 +70,14 @@ internal class DocentEventNotifier(private val project: Project) : EventNotifier
         if (workspace == null) {
             LOG.info("Docent: thread $threadId is not in Air's thread store; pushing with the workspace derived from $projectPath")
         }
+        val request = AirRequests.existingSession(
+            workspaceId = workspace?.workspaceId ?: workspaceIdForPath(projectPath),
+            projectDirectory = workspace?.projectDirectory ?: projectPath,
+            threadId = threadId,
+            prompt = prompt,
+        )
         val result = runBlockingMaybeCancellable {
-            AgentPromptBackendApi.getInstance().promptExistingSession(
-                AgentPromptExistingSessionRequest(
-                    workspaceId = workspace?.workspaceId ?: workspaceIdForPath(projectPath),
-                    projectDirectory = workspace?.projectDirectory ?: projectPath,
-                    threadId = threadId,
-                    initialMessageRequest = AgentPromptInitialMessageRequest(prompt = prompt),
-                ),
-            )
+            project.service<AgentPromptBackendLaunchService>().promptExistingSession(request)
         }
         if (!result.launched) {
             LOG.info(

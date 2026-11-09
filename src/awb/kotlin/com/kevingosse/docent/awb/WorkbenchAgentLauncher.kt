@@ -12,9 +12,7 @@ import com.intellij.air.frontend.launch.quickStartLabel
 import com.intellij.air.frontend.prompt.ui.buildEnabledAgentCatalogMenuModel
 import com.intellij.air.shared.core.thread.AgentId
 import com.intellij.air.shared.prompt.AgentPromptBackendApi
-import com.intellij.air.shared.prompt.AgentPromptInitialMessageRequest
 import com.intellij.air.shared.prompt.AgentPromptLaunchProfile
-import com.intellij.air.shared.prompt.AgentPromptLaunchRequest
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.service
@@ -143,16 +141,8 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
                 val launchProfile = profile ?: minimalProfile(providerIdOf(option.provider))
                 val result = runBlockingMaybeCancellable {
                     AgentPromptBackendApi.getInstance().launchPrompt(
-                        AgentPromptLaunchRequest(
-                            // 263.4825: addressed by workspace id + project directory (was: one projectPath).
-                            workspaceId = workspaceIdForPath(base),
-                            projectDirectory = base,
-                            launchProfile = launchProfile,
-                            initialMessageRequest = AgentPromptInitialMessageRequest(prompt = initialPrompt),
-                            // 263.7351 (IJAI-3626): required, no default. Air's own non-composer launches pass
-                            // false (agent UI is an opt-in of the new-session composer).
-                            agentUi = false,
-                        ),
+                        // 263.4825: addressed by workspace id + project directory (was: one projectPath).
+                        AirRequests.launch(workspaceIdForPath(base), base, launchProfile, initialPrompt),
                     )
                 }
                 if (!result.launched) LOG.info("Docent: new-session launch not accepted (${result.error})")
@@ -179,6 +169,6 @@ internal class WorkbenchAgentLauncher(private val project: Project) : AgentSessi
         /** A minimal launch profile carrying just the agent id, for the plain-agent fallback (Air resolves the
          *  agent's default route from it — 263.5160's `resolveAgentThreadLaunchProfile`). */
         private fun minimalProfile(agentId: String): AgentPromptLaunchProfile =
-            AgentPromptLaunchProfile(name = "Docent", agentId = AgentId.from(agentId))
+            AirRequests.minimalProfile("Docent", AgentId.from(agentId))
     }
 }

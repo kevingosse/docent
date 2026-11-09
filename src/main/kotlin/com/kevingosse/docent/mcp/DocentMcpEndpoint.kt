@@ -10,7 +10,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
 /**
  * A **docent-only** MCP endpoint for coding agents: the IDE's *private* MCP server (a separate port from
@@ -49,7 +52,8 @@ class DocentMcpEndpoint(private val cs: CoroutineScope) {
         if (started.compareAndSet(false, true)) {
             cs.launch {
                 try {
-                    McpServerService.getInstance().authorizedSession(
+                    authorizedSession(
+                        McpServerService.getInstance(),
                         McpServerService.McpSessionOptions(
                             commandExecutionMode = McpServerService.AskCommandExecutionMode.RESPECT_GLOBAL_SETTINGS,
                             toolFilter = DocentToolsOnly,
@@ -68,6 +72,32 @@ class DocentMcpEndpoint(private val cs: CoroutineScope) {
         }
         // First call pays the private-server startup; generous bound so a slow start doesn't false-negative.
         return withTimeoutOrNull(10_000) { armed.await() }
+    }
+
+    /**
+     * `service.authorizedSession(options, block)`, called by reflection. `McpServerService` was a class until
+     * 263.x and is an interface in 271.2467, and a compiled call only works on one of them (invokevirtual vs
+     * invokeinterface: `IncompatibleClassChangeError` on the other). The method itself is unchanged; this passes
+     * the coroutine's continuation by hand, as the compiler would.
+     */
+    private suspend fun authorizedSession(
+        service: McpServerService,
+        options: McpServerService.McpSessionOptions,
+        block: suspend CoroutineScope.(port: Int, headerName: String, token: String) -> Unit,
+    ) {
+        val method = McpServerService::class.java.getMethod(
+            "authorizedSession",
+            McpServerService.McpSessionOptions::class.java,
+            Function5::class.java,
+            Continuation::class.java,
+        )
+        suspendCoroutineUninterceptedOrReturn<Unit> { cont ->
+            try {
+                method.invoke(service, options, block, cont)
+            } catch (e: InvocationTargetException) {
+                throw e.targetException
+            }
+        }
     }
 
     /** Non-suspending view for status surfaces: the endpoint if it's already armed. */
